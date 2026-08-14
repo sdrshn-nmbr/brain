@@ -17,7 +17,8 @@ ENV BRAIN_DATA_DIR=/data \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 RUN groupadd --gid 1000 brain \
-    && useradd --uid 1000 --gid brain --create-home brain
+    && useradd --uid 1000 --gid brain --create-home brain \
+    && install -d --owner=brain --group=brain /data
 WORKDIR /app
 COPY --from=builder --chown=brain:brain /app /app
 USER brain

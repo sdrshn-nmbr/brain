@@ -55,7 +55,7 @@ Publishing is the one local step. The server cannot read `~/.claude`, `~/.codex`
 publisher once through uv without installing it:
 
 ```bash
-uvx --from git+https://github.com/sdrshn-nmbr/brain@main brain-sync \
+uvx --from git+https://github.com/sdrshn-nmbr/brain@v1.1.0 brain-sync \
   --endpoint https://brain.your-tailnet.ts.net/mcp \
   --repository github.com/example/widget \
   --visibility "Example engineering" \
@@ -65,7 +65,7 @@ uvx --from git+https://github.com/sdrshn-nmbr/brain@main brain-sync \
 The dry run writes a local archive but sends no transcript data. Read the printed scope, then publish that exact archive:
 
 ```bash
-uvx --from git+https://github.com/sdrshn-nmbr/brain@main brain-sync \
+uvx --from git+https://github.com/sdrshn-nmbr/brain@v1.1.0 brain-sync \
   --endpoint https://brain.your-tailnet.ts.net/mcp \
   --archive "$HOME/Downloads/agent-chats-export-<timestamp>.zip"
 ```
@@ -79,7 +79,7 @@ that records future side-chat prompts, assistant replies, and tool events under
 `~/.codex/attachments/sidechats/*.jsonl`:
 
 ```bash
-uvx --from git+https://github.com/sdrshn-nmbr/brain@main brain-sidechat-recorder --install-hook
+uvx --from git+https://github.com/sdrshn-nmbr/brain@v1.1.0 brain-sidechat-recorder --install-hook
 export CODEX_CLI_PATH="$HOME/.codex/bin/brain-sidechat-recorder"
 ```
 

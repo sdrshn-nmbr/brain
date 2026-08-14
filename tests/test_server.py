@@ -27,6 +27,7 @@ from brain.observability import RequestLog
 from brain.server import create_app, create_server
 from brain.uploads import UploadManager
 from collector.archive import stable_session_key
+from scripts.mcp_smoke import build_smoke_archive
 
 
 def server_config(data_dir: Path, port: int) -> Config:
@@ -94,15 +95,16 @@ def upload_archive_bytes() -> bytes:
     return output.getvalue()
 
 
-async def test_remote_mcp_uses_tailscale_identity_without_a_brain_token(corpus_dir: Path) -> None:
+async def test_tailscale_mcp_upload_ingest_search_read_and_observability(tmp_path: Path) -> None:
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
     config = replace(
-        server_config(corpus_dir, port),
+        server_config(tmp_path, port),
         auth_mode="tailscale",
         token_credentials=(),
         tailscale_admin_users=frozenset({"alice@example.com"}),
+        ingest_script=None,
     )
     server = uvicorn.Server(uvicorn.Config(create_app(config), host="127.0.0.1", port=port, log_level="warning"))
     task = asyncio.create_task(server.serve())
@@ -139,6 +141,44 @@ async def test_remote_mcp_uses_tailscale_identity_without_a_brain_token(corpus_d
                     "allowedRepositories": ["github.com/acme/widget"],
                     "visibility": "team",
                 }
+                archive = tmp_path / "tailscale-smoke.zip"
+                session_uuid, unique_term, scope = build_smoke_archive(archive, "github.com/acme/widget", "team")
+                prepared = await client.call_tool(
+                    "prepare_upload",
+                    {
+                        "archiveSha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+                        "archiveBytes": archive.stat().st_size,
+                        "scope": scope,
+                        "confirmedShared": True,
+                    },
+                )
+                upload = prepared.structured_content["result"]
+                response = await http_client.put(
+                    f"http://127.0.0.1:{port}{upload['uploadPath']}",
+                    content=archive.read_bytes(),
+                )
+                assert response.status_code == 200
+                committed = await client.call_tool("commit_upload", {"uploadId": upload["id"]})
+                record = committed.structured_content["result"]
+                for _ in range(100):
+                    if record["status"] not in {"queued", "processing"}:
+                        break
+                    await asyncio.sleep(0.02)
+                    status = await client.call_tool("upload_status", {"uploadId": upload["id"]})
+                    record = status.structured_content["result"]
+                assert record["status"] == "complete", record
+                search = await client.call_tool(
+                    "search",
+                    {"query": unique_term, "repository": "github.com/acme/widget", "limit": 5},
+                )
+                result = next(item for item in search.structured_content["result"] if item["uuid"] == session_uuid)
+                session = await client.call_tool("read_session", {"sessionId": result["sessionId"]})
+                assert unique_term in "".join(
+                    entry["text"] for entry in session.structured_content["result"]["entries"]
+                )
+                requests = await client.call_tool("admin_requests", {"actor": "alice@example.com"})
+                observed_tools = {item["mcpName"] for item in requests.structured_content["result"]}
+                assert {"access", "prepare_upload", "commit_upload", "search", "read_session"} <= observed_tools
     finally:
         server.should_exit = True
         await task

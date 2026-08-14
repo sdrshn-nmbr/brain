@@ -355,7 +355,7 @@ class AuthorizationMiddleware:
 def create_server(config: Config, corpus: CorpusStore, uploads: UploadManager, request_log: RequestLog) -> MCPServer:
     mcp = MCPServer(
         "brain",
-        version="0.1.0",
+        version="1.1.0",
         title="Brain",
         description="Search and selectively share repository-scoped agent session history.",
         instructions=(

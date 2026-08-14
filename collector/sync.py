@@ -75,7 +75,7 @@ def mcp_call(endpoint: str, name: str, arguments: dict) -> dict:
                 "io.modelcontextprotocol/protocolVersion": "2026-07-28",
                 "io.modelcontextprotocol/clientInfo": {
                     "name": "brain-sync",
-                    "version": "0.1.0",
+                    "version": "1.1.0",
                 },
                 "io.modelcontextprotocol/clientCapabilities": {},
             },
@@ -136,7 +136,7 @@ class MCPClient:
                     "arguments": arguments,
                     "_meta": {
                         "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-                        "io.modelcontextprotocol/clientInfo": {"name": "brain-sync", "version": "0.1.0"},
+                        "io.modelcontextprotocol/clientInfo": {"name": "brain-sync", "version": "1.1.0"},
                         "io.modelcontextprotocol/clientCapabilities": {},
                     },
                 },

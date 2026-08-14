@@ -36,5 +36,25 @@ jobs:
       - uses: docker/build-push-action@v7
         with:
           context: .
+          load: true
           push: false
           platforms: linux/amd64
+          tags: brain:ci
+      - name: Start container with a fresh data volume
+        run: |
+          docker run --rm --detach --name brain-ci \
+            --publish 127.0.0.1:18788:8788 \
+            --env BRAIN_AUTH_MODE=token \
+            --env 'BRAIN_TOKENS_JSON=[{"tokenSha256":"7a68521efb77b87c14e9fd7c27e1ebc1f5016b7d4e53b4cb6104bf886995aebe","principal":"ci@example.com","access":"admin"}]' \
+            --env BRAIN_ALLOWED_REPOSITORIES=github.com/example/widget \
+            brain:ci
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:18788/healthz; then
+              docker stop brain-ci
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs brain-ci
+          docker stop brain-ci
+          exit 1
