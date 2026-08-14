@@ -21,7 +21,7 @@ Issues = "https://github.com/sdrshn-nmbr/brain/issues"
 [dependency-groups]
 dev = [
   "httpx>=0.28,<1",
-  "pytest>=8,<9",
+  "pytest>=9.1.1,<10",
   "pytest-asyncio>=1,<2",
   "rich>=14,<15",
   "ruff>=0.12,<1",
