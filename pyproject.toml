@@ -8,7 +8,7 @@ authors = [{ name = "Sudarshan Nambiar" }]
 requires-python = ">=3.11"
 dependencies = [
   "mcp>=2,<3",
-  "rich>=14,<15",
+  "rich>=15.0.0,<16",
   "uvicorn>=0.35,<1",
   "zstandard>=0.22,<1",
 ]
@@ -23,7 +23,7 @@ dev = [
   "httpx>=0.28,<1",
   "pytest>=8,<9",
   "pytest-asyncio>=1,<2",
-  "rich>=14,<15",
+  "rich>=15.0.0,<16",
   "ruff>=0.12,<1",
 ]
 
