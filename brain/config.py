@@ -78,6 +78,15 @@ def _positive_int(values: Mapping[str, str], name: str, default: int) -> int:
     return value
 
 
+def _boolean(values: Mapping[str, str], name: str, default: bool) -> bool:
+    raw = values.get(name, str(default)).strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be true or false")
+
+
 @dataclass(frozen=True)
 class Config:
     data_dir: Path
@@ -94,6 +103,7 @@ class Config:
     tailscale_allowed_users: frozenset[str] | None
     tailscale_admin_users: frozenset[str]
     tailscale_app_capability: str
+    tailscale_require_capability: bool
     max_upload_bytes: int
     max_pending_bytes_per_owner: int
     upload_ttl_seconds: int
@@ -123,7 +133,7 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     if search_timeout_seconds <= 0:
         raise ValueError("BRAIN_SEARCH_TIMEOUT_SECONDS must be a positive number")
 
-    auth_mode = values.get("BRAIN_AUTH_MODE", "token").strip().lower()
+    auth_mode = values.get("BRAIN_AUTH_MODE", "tailscale").strip().lower()
     if auth_mode not in AUTH_MODES:
         raise ValueError("BRAIN_AUTH_MODE must be token, trusted-header, tailscale, or none")
     token_credentials = _load_token_credentials(values)
@@ -159,7 +169,8 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         trusted_name_header=values.get("BRAIN_TRUSTED_NAME_HEADER", "X-Brain-Name"),
         tailscale_allowed_users=tailscale_allowed or None,
         tailscale_admin_users=tailscale_admin,
-        tailscale_app_capability=values.get("BRAIN_TAILSCALE_APP_CAPABILITY", "brain.dev/cap/read"),
+        tailscale_app_capability=values.get("BRAIN_TAILSCALE_APP_CAPABILITY", "example.com/cap/brain"),
+        tailscale_require_capability=_boolean(values, "BRAIN_TAILSCALE_REQUIRE_CAPABILITY", False),
         max_upload_bytes=max_upload_bytes,
         max_pending_bytes_per_owner=max_pending_bytes_per_owner,
         upload_ttl_seconds=upload_ttl_seconds,

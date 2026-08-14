@@ -5,6 +5,7 @@ import sqlite3
 import threading
 import zipfile
 from pathlib import Path
+from typing import cast
 
 import pytest
 import zstandard as zstd
@@ -324,7 +325,7 @@ def test_index_commit_failure_leaves_only_reusable_orphan_object(tmp_path: Path)
         def commit(self):
             raise RuntimeError("injected index commit failure")
 
-    ingestor.conn = FailingCommit()
+    ingestor.conn = cast(sqlite3.Connection, FailingCommit())
     try:
         with pytest.raises(RuntimeError, match="injected index commit failure"):
             ingestor.ingest_zip("alice", archive)

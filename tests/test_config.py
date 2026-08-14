@@ -22,15 +22,16 @@ def token_config() -> str:
 def base_env() -> dict[str, str]:
     return {
         "BRAIN_ALLOWED_REPOSITORIES": "github.com/acme/widget,gitlab.com/acme/platform/model",
-        "BRAIN_TOKENS_JSON": token_config(),
     }
 
 
-def test_token_auth_is_the_secure_default() -> None:
+def test_tailscale_auth_is_the_secure_default() -> None:
     config = load_config(base_env())
     assert config.host == "127.0.0.1"
-    assert config.auth_mode == "token"
-    assert config.token_credentials[0].access == AccessLevel.ADMIN
+    assert config.auth_mode == "tailscale"
+    assert config.token_credentials == ()
+    assert config.tailscale_app_capability == "example.com/cap/brain"
+    assert config.tailscale_require_capability is False
     assert config.allowed_repositories == frozenset({"github.com/acme/widget", "gitlab.com/acme/platform/model"})
 
 
@@ -47,7 +48,17 @@ def test_none_mode_cannot_bind_publicly() -> None:
 
 def test_token_mode_requires_credentials() -> None:
     with pytest.raises(ValueError, match="requires"):
-        load_config({"BRAIN_ALLOWED_REPOSITORIES": "github.com/acme/widget"})
+        load_config({"BRAIN_AUTH_MODE": "token", "BRAIN_ALLOWED_REPOSITORIES": "github.com/acme/widget"})
+
+
+def test_token_mode_loads_explicit_credentials() -> None:
+    config = load_config({**base_env(), "BRAIN_AUTH_MODE": "token", "BRAIN_TOKENS_JSON": token_config()})
+    assert config.token_credentials[0].access == AccessLevel.ADMIN
+
+
+def test_rejects_invalid_tailscale_capability_setting() -> None:
+    with pytest.raises(ValueError, match="true or false"):
+        load_config({**base_env(), "BRAIN_TAILSCALE_REQUIRE_CAPABILITY": "sometimes"})
 
 
 def test_repository_allowlist_is_required_and_validated() -> None:

@@ -1,166 +1,128 @@
 # Brain
 
-Brain is a self-hosted search service for agent session history. It exposes a stateless MCP endpoint, collects local
-sessions from Claude Code, Codex, and Cursor, and lets each person decide exactly what to share.
+Your team already wrote the missing manual. It is sitting in agent chats.
 
-Brain is built for a team, company, research group, or any other trusted group. It does not depend on one Git host,
-identity provider, cloud, or private network.
+Brain turns Claude Code, Codex, and Cursor sessions into a shared, searchable memory. A new teammate can ask why a
+system works this way. An agent can find the old investigation instead of repeating it. The useful context can span the
+whole history of a Git organization, including decisions that never made it into a document.
 
-## What it does
+Deploy Brain once. Put it on your Tailnet. Point any stateless MCP client at `/mcp`. Search needs no Brain package,
+token, browser login, or custom client. It works well from Code Mode because the MCP tools are small data operations and
+the agent can combine them in a REPL.
 
-- Searches full session text with SQLite FTS5.
-- Preserves user and assistant messages, reasoning records, tool calls, tool results, timestamps, source metadata, and
-  Git provenance when the local agent stored them.
-- Scopes exports by the Git `origin` of each session's saved working directory.
-- Deduplicates repeated content with SHA-256 content-addressed storage.
-- Sends only sessions and bodies the server does not already have.
-- Gives callers read, append, or admin access.
-- Lets append users publish only to their own corpus identity.
-- Records bounded, redacted request metadata for administrators without retaining raw search text or upload bodies.
+Brain is open source and cloud-neutral. AWS, another cloud, or one machine all work.
 
-Brain does not upload arbitrary Codex attachment files. They are not reliably tied to a repository. Codex Desktop side
-chats are included only when their recorded working directory resolves to an allowed repository. Brain reads the local
-Codex diagnostic store and also understands richer recorder output at `~/.codex/attachments/sidechats/*.jsonl`, but it
-does not install or inject a recorder into Codex. Side chats can therefore be partial when Codex did not persist assistant
-response text.
+## What feels different
 
-## Quick start
+- Tailscale is the default front door. People use the identity they already have on the private network.
+- Search and reading are remote, stateless MCP calls. There is nothing to install on each reader's machine.
+- Sharing stays deliberate. The local exporter shows the repository, source, dates, and session count before upload.
+- Repository scope comes from the saved session directory's Git `origin`, not its folder name.
+- Claude Code, Codex, Cursor, subagents, archived Codex sessions, and recorded Codex Desktop side chats are supported.
+- Repeated text is stored once with SHA-256 content-addressed storage. Uploads send only missing sessions and bodies.
+- Admins can inspect bounded, redacted request records without storing raw query text or upload bodies.
 
-Install [uv](https://docs.astral.sh/uv/), clone the repository, then create an admin token:
+## Run it
+
+[uv](https://docs.astral.sh/uv/) is the default way to build, test, and run Brain.
 
 ```bash
-uv sync --frozen
-uv run brain-token --principal you@example.com --access admin --output tokens.json
+git clone https://github.com/sdrshn-nmbr/brain
+cd brain
+cp .env.example .env
+# Edit the repository, Tailnet host, admin login, and app-capability domain.
+docker compose up -d
+tailscale serve --accept-app-caps=example.com/cap/brain 8788
 ```
 
-The command stores only the token digest and prints the token once. Keep the printed token private.
+Then point a remote MCP client at:
 
-Start Brain for one repository:
-
-```bash
-export BRAIN_AUTH_MODE=token
-export BRAIN_TOKENS_FILE="$PWD/tokens.json"
-export BRAIN_ALLOWED_REPOSITORIES=github.com/example/widget
-export BRAIN_VISIBILITY="example team"
-uv run brain
+```text
+https://brain.your-tailnet.ts.net/mcp
 ```
 
-In another shell, preview a local export. GitHub `owner/repository` is accepted as shorthand; other hosts use
-`host/owner/repository`.
+Tailscale Serve adds the caller identity and strips spoofed identity headers. Keep Brain's published port on host
+loopback and do not expose its plain HTTP port. See [authentication](docs/authentication.md) and
+[deployment](docs/deployment.md).
+
+## Search without a client install
+
+The server exposes `search`, `browse`, `read_session`, and `stats` as normal MCP tools. Add the URL to Claude Code,
+Codex, Cursor, OpenCode, or another remote MCP client. Code Mode can call those tools from its own REPL; it does not need
+the Brain Python package.
+
+Publishing is the one local step. The server cannot read `~/.claude`, `~/.codex`, or Cursor's local databases. Run the
+publisher once through uv without installing it:
 
 ```bash
-export BRAIN_TOKEN='<the token printed above>'
-uv run brain-sync \
-  --endpoint http://127.0.0.1:8788/mcp \
-  --repository example/widget \
-  --visibility "example team" \
+uvx --from git+https://github.com/sdrshn-nmbr/brain@main brain-sync \
+  --endpoint https://brain.your-tailnet.ts.net/mcp \
+  --repository github.com/example/widget \
+  --visibility "Example engineering" \
   --dry-run
 ```
 
-The preview writes a local archive and sends no transcript data. Review the repository list, sources, time bounds,
-session counts, skipped sessions, and archive path. Then publish that exact archive:
+The dry run writes a local archive but sends no transcript data. Read the printed scope, then publish that exact archive:
 
 ```bash
-uv run brain-sync \
-  --endpoint http://127.0.0.1:8788/mcp \
-  --archive "$HOME/Downloads/agent-chats-export-<timestamp>.zip" \
-  --visibility "example team"
+uvx --from git+https://github.com/sdrshn-nmbr/brain@main brain-sync \
+  --endpoint https://brain.your-tailnet.ts.net/mcp \
+  --archive "$HOME/Downloads/agent-chats-export-<timestamp>.zip"
 ```
 
-Brain asks for confirmation before upload. Use `--yes` only in an already approved automation flow.
+Brain asks before upload. Use `--yes` only after a person or approved automation has accepted that exact scope.
 
-## MCP client
+## Codex Desktop side chats
 
-Point any stateless MCP client at `https://your-brain.example/mcp` and send:
-
-```text
-Authorization: Bearer <token>
-```
-
-Read tools:
-
-- `access`
-- `search`
-- `browse`
-- `read_session`
-- `stats`
-
-Append tools:
-
-- `plan_upload`
-- `missing_blobs`
-- `prepare_upload`
-- `commit_upload`
-- `upload_status`
-- `list_my_uploads`
-- `cancel_upload`
-
-Admin tools:
-
-- `admin_requests`
-- `admin_request_stats`
-
-## Repository scope
-
-Repository scope is enforced three times:
-
-1. The collector resolves each saved session working directory with Git and reads its `origin`.
-2. The upload server compares the confirmed archive scope with `BRAIN_ALLOWED_REPOSITORIES`.
-3. The ingester checks every session again before changing the searchable index.
-
-Canonical repository IDs include the host, for example `github.com/acme/api` or
-`gitlab.example.com/platform/models/recommender`. Local folder names are never used as repository identity.
-
-## Authentication
-
-The secure default is bearer-token authentication. Brain also supports trusted identity headers and Tailscale Serve.
-Unauthenticated mode is restricted to a loopback bind and exists only for local development.
-
-See [authentication](docs/authentication.md) for configuration and threat boundaries.
-
-## Deployment
-
-- [Docker Compose](compose.yaml) binds Brain to host loopback by default.
-- [Kubernetes](deploy/kubernetes/README.md) uses one persistent volume and a separately created token Secret.
-- The container is published for AMD64 and ARM64 at `ghcr.io/sdrshn-nmbr/brain`.
-
-Put HTTPS or a private network proxy in front of Brain before remote use. SQLite requires one writable replica and a
-ReadWriteOnce volume. Searches use independent read-only connections, so reads remain available during atomic ingests.
-
-See [deployment](docs/deployment.md) and [architecture](docs/architecture.md).
-
-## Verify
+Codex does not always put complete Desktop side chats in its normal session files. Brain includes a small opt-in proxy
+that records future side-chat prompts, assistant replies, and tool events under
+`~/.codex/attachments/sidechats/*.jsonl`:
 
 ```bash
+uvx --from git+https://github.com/sdrshn-nmbr/brain@main brain-sidechat-recorder --install-hook
+export CODEX_CLI_PATH="$HOME/.codex/bin/brain-sidechat-recorder"
+```
+
+Start Codex Desktop from an environment containing that variable. The hook is local and contains only Python standard
+library code. Recording failure never blocks Codex. These files can contain sensitive tool data. Brain uploads a
+recorded side chat only when its saved working directory resolves to an allowed repository and the user confirms the
+archive. Arbitrary files from `~/.codex/attachments` are never uploaded.
+
+## Scope and access
+
+Scope is checked by the exporter, upload server, and ingester. Repository IDs include the Git host, such as
+`github.com/acme/api` or `gitlab.example.com/platform/models/recommender`.
+
+Tailnet users get append access by default. Named admins get observability tools. Tagged workloads need a Tailscale app
+capability and stay read-only. The included [policy templates](deploy/tailscale/) show read, append, and admin grants for
+fine-grained access. Bearer tokens and trusted proxy headers remain explicit alternatives.
+
+## Why SQLite
+
+The current bottlenecks were query shape, archive packaging, and connection reuse. After those fixes, local SQLite FTS
+search is fast and the single-writer design stays easy to operate. Brain keeps reads online during atomic ingestion and
+uses a separate append-only object database for deduplicated bodies.
+
+Possible future directions:
+
+- A Turbopuffer backend for lexical search, vector search, and other indexes, with S3 for session bodies.
+- Hybrid semantic and full-text ranking.
+- Postgres or Turso when a deployment needs several writers or a managed database.
+- Go, Rust, async pipelines, or SIMD JSON parsing if profiles show CPU parsing is the next real limit.
+
+These are options, not required complexity.
+
+## Develop
+
+```bash
+uv sync --frozen
 just check
 ```
 
-Run a non-persistent remote transport test:
+`just check` runs Ruff, ty, the full test suite, and package build. Brain uses Pydantic models at its MCP boundary and
+checks them with ty's Pydantic-aware type analysis.
 
-```bash
-BRAIN_MCP_URL=https://your-brain.example/mcp \
-BRAIN_TOKEN='<admin or append token>' \
-uv run python scripts/mcp_smoke.py
-```
-
-Run the full upload, ingest, search, and read-back test only against a disposable corpus:
-
-```bash
-BRAIN_SMOKE_COMMIT=1 \
-BRAIN_MCP_URL=http://127.0.0.1:8788/mcp \
-BRAIN_TOKEN='<admin or append token>' \
-uv run python scripts/mcp_smoke.py
-```
-
-## Limits
-
-- The service is designed for one writable process over local persistent storage, not active-active replicas.
-- SQLite FTS is lexical search. Brain does not add embeddings or semantic ranking.
-- Transcript formats are private implementation details of agent tools and can change. Parser regressions are isolated per
-  session and reported in export totals.
-- Session supersession is narrow: a newer saved generation of the same canonical session can replace the older searchable
-  generation. Different sessions and different users cannot replace each other.
-
-## License
+The service uses one writable process and one persistent data directory. See [architecture](docs/architecture.md) for
+the storage and consistency rules.
 
 Apache-2.0. See [LICENSE](LICENSE).

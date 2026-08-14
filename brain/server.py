@@ -8,6 +8,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -39,9 +40,9 @@ logger = logging.getLogger("brain")
 
 Source = Literal["claude", "codex", "cursor"]
 
-READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
-WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False)
-DELETE = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False)
+READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
+WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
+DELETE = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=False)
 
 
 class UploadScope(BaseModel):
@@ -55,7 +56,7 @@ class UploadScope(BaseModel):
     visibility: str = Field(min_length=1, max_length=100)
 
 
-def authenticate_headers(headers: dict[str, str] | None, config: Config) -> Identity:
+def authenticate_headers(headers: Mapping[str, str] | None, config: Config) -> Identity:
     return authenticate(
         headers,
         mode=config.auth_mode,
@@ -66,6 +67,7 @@ def authenticate_headers(headers: dict[str, str] | None, config: Config) -> Iden
         tailscale_allowed_users=config.tailscale_allowed_users,
         tailscale_admin_users=config.tailscale_admin_users,
         tailscale_app_capability=config.tailscale_app_capability,
+        tailscale_require_capability=config.tailscale_require_capability,
     )
 
 
@@ -351,7 +353,18 @@ class AuthorizationMiddleware:
 
 
 def create_server(config: Config, corpus: CorpusStore, uploads: UploadManager, request_log: RequestLog) -> MCPServer:
-    mcp = MCPServer("brain", version="0.1.0")
+    mcp = MCPServer(
+        "brain",
+        version="0.1.0",
+        title="Brain",
+        description="Search and selectively share repository-scoped agent session history.",
+        instructions=(
+            "Search with search, browse, and read_session. This is a stateless remote MCP; reading needs no local "
+            "Brain package. Publishing needs the local one-shot brain-sync command because the server cannot read "
+            "transcripts from the client filesystem. Always preview and confirm an archive before publishing it."
+        ),
+        website_url="https://github.com/sdrshn-nmbr/brain",
+    )
 
     @mcp.tool(
         title="Inspect my Brain access",
