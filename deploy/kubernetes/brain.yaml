@@ -4,6 +4,66 @@ metadata:
   name: brain
 ---
 apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: brain
+  namespace: brain
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: brain-tailscale-state
+  namespace: brain
+stringData: {}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: brain-tailscale-state
+  namespace: brain
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["brain-tailscale-state"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: brain-tailscale-state
+  namespace: brain
+subjects:
+  - kind: ServiceAccount
+    name: brain
+    namespace: brain
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: brain-tailscale-state
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: brain-tailscale-serve
+  namespace: brain
+data:
+  serve.json: |
+    {
+      "TCP": {"443": {"HTTPS": true}},
+      "Web": {
+        "${TS_CERT_DOMAIN}:443": {
+          "Handlers": {
+            "/": {
+              "Proxy": "http://127.0.0.1:8788",
+              "AcceptAppCaps": ["example.com/cap/brain"]
+            }
+          }
+        }
+      },
+      "AllowFunnel": {"${TS_CERT_DOMAIN}:443": false}
+    }
+---
+apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: brain-data
@@ -31,6 +91,7 @@ spec:
       labels:
         app.kubernetes.io/name: brain
     spec:
+      serviceAccountName: brain
       securityContext:
         fsGroup: 1000
         fsGroupChangePolicy: OnRootMismatch
@@ -44,32 +105,34 @@ spec:
             - name: BRAIN_DATA_DIR
               value: /data
             - name: BRAIN_AUTH_MODE
-              value: token
-            - name: BRAIN_TOKENS_FILE
-              value: /run/secrets/brain/tokens.json
+              value: tailscale
             - name: BRAIN_ALLOWED_REPOSITORIES
               value: github.com/example/example
             - name: BRAIN_PUBLIC_HOSTS
-              value: brain.example.com
+              value: brain.your-tailnet.ts.net
             - name: BRAIN_VISIBILITY
               value: example organization
-          ports:
-            - name: http
-              containerPort: 8788
+            - name: BRAIN_TAILSCALE_ADMIN_USERS
+              value: you@example.com
+            - name: BRAIN_TAILSCALE_APP_CAPABILITY
+              value: example.com/cap/brain
+            - name: BRAIN_TAILSCALE_REQUIRE_CAPABILITY
+              value: "false"
           volumeMounts:
             - name: data
               mountPath: /data
-            - name: auth
-              mountPath: /run/secrets/brain
-              readOnly: true
           readinessProbe:
-            httpGet:
-              path: /healthz
-              port: http
+            exec:
+              command:
+                - python3
+                - -c
+                - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8788/healthz', timeout=2)
           livenessProbe:
-            httpGet:
-              path: /healthz
-              port: http
+            exec:
+              command:
+                - python3
+                - -c
+                - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8788/healthz', timeout=2)
           resources:
             requests:
               cpu: 100m
@@ -85,23 +148,50 @@ spec:
             runAsGroup: 1000
             runAsNonRoot: true
             runAsUser: 1000
+        - name: tailscale
+          image: tailscale/tailscale:v1.102.2
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: TS_AUTHKEY
+              valueFrom:
+                secretKeyRef:
+                  name: brain-tailscale-auth
+                  key: authkey
+            - name: TS_HOSTNAME
+              value: brain
+            - name: TS_EXTRA_ARGS
+              value: --advertise-tags=tag:brain
+            - name: TS_KUBE_SECRET
+              value: brain-tailscale-state
+            - name: TS_SERVE_CONFIG
+              value: /config/serve.json
+            - name: TS_USERSPACE
+              value: "true"
+          volumeMounts:
+            - name: tailscale-serve
+              mountPath: /config
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: brain-data
-        - name: auth
-          secret:
-            secretName: brain-auth
+        - name: tailscale-serve
+          configMap:
+            name: brain-tailscale-serve
 ---
-apiVersion: v1
-kind: Service
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
 metadata:
-  name: brain
+  name: brain-deny-ingress
   namespace: brain
 spec:
-  selector:
-    app.kubernetes.io/name: brain
-  ports:
-    - name: http
-      port: 8788
-      targetPort: http
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: brain
+  policyTypes: ["Ingress"]

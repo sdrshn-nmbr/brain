@@ -19,6 +19,7 @@ import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 from . import common
 
@@ -223,10 +224,12 @@ def _parse_conversation(jsonl_path: Path, query: str | None = None, context_msgs
 
     term_coverage, match_count = 0, 0
     if query_terms:
-        matching_indices = {m["index"] for m in messages if common.query_matches_any(m.get("text", ""), query_terms)}
+        matching_indices = {
+            cast(int, m["index"]) for m in messages if common.query_matches_any(str(m.get("text", "")), query_terms)
+        }
         if not matching_indices:
             return None
-        term_coverage, match_count = common.score_terms([m.get("text", "") for m in messages], query_terms)
+        term_coverage, match_count = common.score_terms([str(m.get("text", "")) for m in messages], query_terms)
 
         included = set()
         for idx in matching_indices:
@@ -237,13 +240,14 @@ def _parse_conversation(jsonl_path: Path, query: str | None = None, context_msgs
         current: list[str] = []
         last_idx = -2
         for msg in messages:
-            if msg["index"] in included:
-                if msg["index"] > last_idx + 1 and current:
+            msg_index = cast(int, msg["index"])
+            if msg_index in included:
+                if msg_index > last_idx + 1 and current:
                     groups.append(current)
                     current = []
-                is_match = msg["index"] in matching_indices
+                is_match = msg_index in matching_indices
                 current.append(_format_message(msg, is_match, query_pattern))
-                last_idx = msg["index"]
+                last_idx = msg_index
         if current:
             groups.append(current)
         rendered = groups

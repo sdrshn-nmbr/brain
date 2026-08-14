@@ -647,7 +647,7 @@ _STOPWORDS = frozenset(
 )
 
 
-def _parse_terms(query):
+def _parse_terms(query: str | None) -> list[str]:
     """Whitespace-split into AND terms; a quoted `"..."` query is one exact phrase.
 
     Kept local (not imported from common) so process-pool fork workers stay self-contained.
@@ -662,7 +662,7 @@ def _parse_terms(query):
     return substantive or tokens
 
 
-def _terms_pattern(terms, ignore_case=True):
+def _terms_pattern(terms: list[str], ignore_case: bool = True) -> re.Pattern[str] | None:
     """Smart-case alternation over terms, longest-first. None when no terms.
 
     Case sensitivity is scoped per term with inline (?i:) groups, mirroring
@@ -671,7 +671,7 @@ def _terms_pattern(terms, ignore_case=True):
     """
     if not terms:
         return None
-    ordered = sorted(terms, key=len, reverse=True)
+    ordered: list[str] = sorted(terms, key=len, reverse=True)
     if not ignore_case:
         return re.compile("|".join(re.escape(t) for t in ordered))
     parts = [f"(?i:{re.escape(t)})" if t.islower() else re.escape(t) for t in ordered]

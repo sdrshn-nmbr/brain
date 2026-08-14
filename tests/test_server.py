@@ -7,7 +7,9 @@ import json
 import socket
 import threading
 import zipfile
+from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import httpx
 import httpx2
@@ -16,12 +18,16 @@ import uvicorn
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.server.mcpserver import Context
+from mcp.types import TextContent
 
 from brain.auth import AccessLevel, TokenCredential
 from brain.config import Config
+from brain.corpus import CorpusStore
 from brain.observability import RequestLog
 from brain.server import create_app, create_server
+from brain.uploads import UploadManager
 from collector.archive import stable_session_key
+from scripts.mcp_smoke import build_smoke_archive
 
 
 def server_config(data_dir: Path, port: int) -> Config:
@@ -48,6 +54,7 @@ def server_config(data_dir: Path, port: int) -> Config:
         tailscale_allowed_users=None,
         tailscale_admin_users=frozenset(),
         tailscale_app_capability="brain.example/cap/read",
+        tailscale_require_capability=False,
         max_upload_bytes=1024 * 1024,
         max_pending_bytes_per_owner=1024 * 1024,
         upload_ttl_seconds=7 * 24 * 60 * 60,
@@ -86,6 +93,95 @@ def upload_archive_bytes() -> bytes:
             ),
         )
     return output.getvalue()
+
+
+async def test_tailscale_mcp_upload_ingest_search_read_and_observability(tmp_path: Path) -> None:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    config = replace(
+        server_config(tmp_path, port),
+        auth_mode="tailscale",
+        token_credentials=(),
+        tailscale_admin_users=frozenset({"alice@example.com"}),
+        ingest_script=None,
+    )
+    server = uvicorn.Server(uvicorn.Config(create_app(config), host="127.0.0.1", port=port, log_level="warning"))
+    task = asyncio.create_task(server.serve())
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            await asyncio.sleep(0.01)
+        assert server.started
+        async with httpx2.AsyncClient(headers={"Tailscale-User-Login": "alice@example.com"}) as http_client:
+            transport = streamable_http_client(f"http://127.0.0.1:{port}/mcp", http_client=http_client)
+            async with Client(transport) as client:
+                access = await client.call_tool("access", {})
+                assert access.structured_content["result"] == {
+                    "actor": "alice@example.com",
+                    "identityKind": "tailscale-user",
+                    "accessLevel": "admin",
+                    "tools": [
+                        "access",
+                        "search",
+                        "browse",
+                        "read_session",
+                        "stats",
+                        "plan_upload",
+                        "missing_blobs",
+                        "prepare_upload",
+                        "commit_upload",
+                        "upload_status",
+                        "list_my_uploads",
+                        "cancel_upload",
+                        "admin_requests",
+                        "admin_request_stats",
+                    ],
+                    "allowedRepositories": ["github.com/acme/widget"],
+                    "visibility": "team",
+                }
+                archive = tmp_path / "tailscale-smoke.zip"
+                session_uuid, unique_term, scope = build_smoke_archive(archive, "github.com/acme/widget", "team")
+                prepared = await client.call_tool(
+                    "prepare_upload",
+                    {
+                        "archiveSha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+                        "archiveBytes": archive.stat().st_size,
+                        "scope": scope,
+                        "confirmedShared": True,
+                    },
+                )
+                upload = prepared.structured_content["result"]
+                response = await http_client.put(
+                    f"http://127.0.0.1:{port}{upload['uploadPath']}",
+                    content=archive.read_bytes(),
+                )
+                assert response.status_code == 200
+                committed = await client.call_tool("commit_upload", {"uploadId": upload["id"]})
+                record = committed.structured_content["result"]
+                for _ in range(100):
+                    if record["status"] not in {"queued", "processing"}:
+                        break
+                    await asyncio.sleep(0.02)
+                    status = await client.call_tool("upload_status", {"uploadId": upload["id"]})
+                    record = status.structured_content["result"]
+                assert record["status"] == "complete", record
+                search = await client.call_tool(
+                    "search",
+                    {"query": unique_term, "repository": "github.com/acme/widget", "limit": 5},
+                )
+                result = next(item for item in search.structured_content["result"] if item["uuid"] == session_uuid)
+                session = await client.call_tool("read_session", {"sessionId": result["sessionId"]})
+                assert unique_term in "".join(
+                    entry["text"] for entry in session.structured_content["result"]["entries"]
+                )
+                requests = await client.call_tool("admin_requests", {"actor": "alice@example.com"})
+                observed_tools = {item["mcpName"] for item in requests.structured_content["result"]}
+                assert {"access", "prepare_upload", "commit_upload", "search", "read_session"} <= observed_tools
+    finally:
+        server.should_exit = True
+        await task
 
 
 async def test_remote_mcp_client_auth_search_and_read(corpus_dir: Path) -> None:
@@ -208,6 +304,7 @@ async def test_remote_mcp_client_auth_search_and_read(corpus_dir: Path) -> None:
                 assert stats.is_error is False
                 rejected = await client.call_tool("missing_blobs", {"blobHashes": ["a" * 64]})
                 assert rejected.is_error is True
+                assert isinstance(rejected.content[0], TextContent)
                 assert "Append access" in rejected.content[0].text
 
         async with httpx2.AsyncClient(headers={"Authorization": "Bearer admin-token"}) as http_client:
@@ -233,6 +330,7 @@ async def test_remote_mcp_client_auth_search_and_read(corpus_dir: Path) -> None:
             async with Client(transport) as client:
                 rejected = await client.call_tool("admin_requests", {})
                 assert rejected.is_error is True
+                assert isinstance(rejected.content[0], TextContent)
                 assert "administrator" in rejected.content[0].text
     finally:
         server.should_exit = True
@@ -260,7 +358,12 @@ async def test_cancelled_mcp_search_interrupts_worker(
 
     monkeypatch.setattr("brain.server.identity_from_context", lambda _ctx, _config: "alice@example.com")
     request_log = RequestLog(corpus_dir, 100)
-    mcp = create_server(server_config(corpus_dir, 1), BlockingStore(), object(), request_log)
+    mcp = create_server(
+        server_config(corpus_dir, 1),
+        cast("CorpusStore", BlockingStore()),
+        cast("UploadManager", object()),
+        request_log,
+    )
     invocation = asyncio.create_task(mcp.call_tool("search", {"query": "deployment"}, Context(mcp_server=mcp)))
     assert await asyncio.to_thread(started.wait, 1)
     invocation.cancel()

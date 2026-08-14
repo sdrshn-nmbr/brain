@@ -1,0 +1,36 @@
+{
+  "groups": {
+    "group:brain-members": ["alice@example.com"],
+    "group:brain-admins": ["alice@example.com"]
+  },
+  "tagOwners": {
+    "tag:brain": ["group:brain-admins"],
+    "tag:brain-reader": ["group:brain-admins"]
+  },
+  "grants": [
+    {
+      "src": ["group:brain-members"],
+      "dst": ["tag:brain"],
+      "ip": ["tcp:443"],
+      "app": {
+        "example.com/cap/brain": [{"access": ["read", "append"]}]
+      }
+    },
+    {
+      "src": ["group:brain-admins"],
+      "dst": ["tag:brain"],
+      "ip": ["tcp:443"],
+      "app": {
+        "example.com/cap/brain": [{"access": ["read", "append", "admin"]}]
+      }
+    },
+    {
+      "src": ["tag:brain-reader"],
+      "dst": ["tag:brain"],
+      "ip": ["tcp:443"],
+      "app": {
+        "example.com/cap/brain": [{"access": ["read"], "actor": "cloud-agent"}]
+      }
+    }
+  ]
+}

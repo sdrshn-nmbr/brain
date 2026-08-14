@@ -1,17 +1,43 @@
 # Authentication
 
-Every accepted request becomes an identity with a stable principal and one access level:
+Tailscale Serve is the default. Every accepted request becomes one identity with `read`, `append`, or `admin` access.
 
-- `read`: search and read shared history.
-- `append`: read plus publish sessions under that principal's derived corpus label.
-- `admin`: append plus inspect request observability.
+## Tailscale Serve
 
-The server exposes the same MCP tool list to every client, but authorization is checked inside each tool. This keeps MCP
-discovery simple without relying on the client to hide forbidden operations.
+Keep Brain's plain HTTP port reachable only from the local Tailscale proxy. Let Tailscale Serve terminate HTTPS and
+forward to port 8788:
+
+```bash
+tailscale serve --accept-app-caps=example.com/cap/brain 8788
+```
+
+Set:
+
+```text
+BRAIN_AUTH_MODE=tailscale
+BRAIN_PUBLIC_HOSTS=brain.your-tailnet.ts.net
+BRAIN_TAILSCALE_ADMIN_USERS=alice@example.com
+BRAIN_TAILSCALE_APP_CAPABILITY=example.com/cap/brain
+```
+
+Human Tailnet users get append access. `BRAIN_TAILSCALE_ALLOWED_USERS` can restrict them, and
+`BRAIN_TAILSCALE_ADMIN_USERS` names administrators.
+
+For fine-grained access, set `BRAIN_TAILSCALE_REQUIRE_CAPABILITY=true` and grant the configured app capability with an
+`access` value of `read`, `append`, or `admin`. See the [Serve and policy templates](../deploy/tailscale/). Use a
+capability name under a domain you control.
+
+Tagged devices do not get human identity headers. They must receive an app capability. Brain always reduces tagged
+workloads to read-only, even if a policy grants append or admin. Shared workload identity is not safe ownership for
+uploads.
+
+Tailscale Serve removes inbound copies of its identity headers before adding its own. Direct access to Brain would let a
+client forge them, so do not expose the backend port.
 
 ## Bearer tokens
 
-Set `BRAIN_AUTH_MODE=token` and provide `BRAIN_TOKENS_FILE` or `BRAIN_TOKENS_JSON`. The value is a JSON array:
+Tokens are an explicit fallback for deployments without Tailscale. Set `BRAIN_AUTH_MODE=token` and provide
+`BRAIN_TOKENS_FILE` or `BRAIN_TOKENS_JSON`:
 
 ```json
 [
@@ -24,36 +50,13 @@ Set `BRAIN_AUTH_MODE=token` and provide `BRAIN_TOKENS_FILE` or `BRAIN_TOKENS_JSO
 ]
 ```
 
-Use `brain-token` to generate the token and digest file. Brain never needs the plaintext token at rest. Clients send the
-plaintext value in `Authorization: Bearer ...`, so remote endpoints must use HTTPS.
+Use `uv run brain-token` to create the digest file. Remote token endpoints must use HTTPS.
 
 ## Trusted headers
 
-Set `BRAIN_AUTH_MODE=trusted-header` when a reverse proxy already authenticates users. The defaults are:
+`BRAIN_AUTH_MODE=trusted-header` accepts `X-Brain-Principal`, `X-Brain-Access`, and `X-Brain-Name` from an existing
+identity proxy. Use it only when clients cannot reach Brain directly and the proxy removes inbound copies.
 
-```text
-X-Brain-Principal: alice@example.com
-X-Brain-Access: append
-X-Brain-Name: Alice
-```
+## Local development
 
-Header names are configurable with `BRAIN_TRUSTED_PRINCIPAL_HEADER`, `BRAIN_TRUSTED_ACCESS_HEADER`, and
-`BRAIN_TRUSTED_NAME_HEADER`.
-
-This mode is safe only when clients cannot reach Brain directly and the proxy removes inbound copies of these headers
-before adding its own. Keep Brain on loopback, a private Unix/network namespace, or an internal Kubernetes Service.
-
-## Tailscale Serve
-
-Set `BRAIN_AUTH_MODE=tailscale`. Human devices use the identity headers injected by Tailscale Serve. Configure optional
-allowlists with `BRAIN_TAILSCALE_ALLOWED_USERS` and administrators with `BRAIN_TAILSCALE_ADMIN_USERS`.
-
-Tagged devices do not receive human identity headers. Brain can accept a read-only Tailscale app capability configured by
-`BRAIN_TAILSCALE_APP_CAPABILITY`, which defaults to `brain.dev/cap/read`. The Serve handler must list the capability in
-`AcceptAppCaps`, and the tailnet policy must grant it to the intended workload tag. Brain intentionally keeps this path
-read-only because a shared workload identity is not safe upload ownership.
-
-## Development mode
-
-`BRAIN_AUTH_MODE=none` creates one local admin identity. Startup fails if `BRAIN_HOST` is not loopback. Do not put a proxy
-in front of this mode.
+`BRAIN_AUTH_MODE=none` creates one local admin identity. Startup rejects a non-loopback bind in this mode.

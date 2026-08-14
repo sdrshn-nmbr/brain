@@ -435,7 +435,8 @@ def _desktop_side_chat_records() -> list[dict]:
         fallback = fallback_by_id.get(session_id)
         captured = captured_by_id.get(session_id)
         if captured is None:
-            records.append(fallback)
+            if fallback is not None:
+                records.append(fallback)
             continue
         if fallback is None:
             records.append(captured)
@@ -1312,7 +1313,7 @@ def list_imports(project: str | None, max_results: int) -> list[dict]:
         )
 
     if project:
-        rows = [r for r in rows if project.lower() in r["cwd"].lower()]
+        rows = [r for r in rows if project.lower() in str(r.get("cwd") or "").lower()]
 
     rows.sort(key=lambda r: r["imported_at"] or 0, reverse=True)
     return rows[: max_results or 50]

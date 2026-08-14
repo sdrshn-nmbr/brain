@@ -6,6 +6,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
 from zipfile import ZipFile
@@ -197,7 +198,7 @@ def test_export_writes_zstd_ndjson_and_unique_cas_objects(tmp_path: Path, monkey
         lambda _job: export_history.Outcome(job, session, repository),
     )
     output = tmp_path / "export.zip"
-    args = SimpleNamespace(
+    args = Namespace(
         source="codex",
         exclude_subagents=False,
         exclude_archived=False,

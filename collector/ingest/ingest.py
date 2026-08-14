@@ -58,6 +58,13 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def inserted_rowid(cursor: sqlite3.Cursor) -> int:
+    rowid = cursor.lastrowid
+    if rowid is None:
+        raise RuntimeError("SQLite insert did not return a row ID")
+    return rowid
+
+
 def generation_is_newer(existing: sqlite3.Row, incoming: dict, incoming_entry_count: int) -> bool:
     existing_ended = existing["ended_at"]
     incoming_ended = incoming.get("ended_at")
@@ -405,7 +412,7 @@ class Ingestor:
             "INSERT INTO blobs(hash, nbytes, nrefs) VALUES (?, ?, 1)",
             (digest, len(raw)),
         )
-        blob_id = int(cur.lastrowid)
+        blob_id = inserted_rowid(cur)
         self._blob_cache[digest] = blob_id
         self.blobs_created += 1
         self.unique_body_bytes_added += len(raw)
@@ -483,7 +490,7 @@ class Ingestor:
                         man.get("repository_root"),
                     ),
                 )
-                import_id = int(cur.lastrowid)
+                import_id = inserted_rowid(cur)
                 sessions = man.get("sessions") or []
                 print(f"  manifest sessions: {len(sessions)}")
 
@@ -581,7 +588,7 @@ class Ingestor:
                             session_key,
                         ),
                     )
-                    session_id = int(sc.lastrowid)
+                    session_id = inserted_rowid(sc)
 
                     entry_rows: list[tuple] = []
                     for e in entries:
