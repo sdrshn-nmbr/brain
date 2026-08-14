@@ -1,0 +1,26 @@
+services:
+  brain:
+    build: .
+    image: ghcr.io/sdrshn-nmbr/brain:latest
+    restart: unless-stopped
+    environment:
+      BRAIN_AUTH_MODE: ${BRAIN_AUTH_MODE:-token}
+      BRAIN_TOKENS_FILE: /run/secrets/brain/tokens.json
+      BRAIN_ALLOWED_REPOSITORIES: ${BRAIN_ALLOWED_REPOSITORIES:?Set BRAIN_ALLOWED_REPOSITORIES in .env}
+      BRAIN_VISIBILITY: ${BRAIN_VISIBILITY:-organization}
+      BRAIN_PUBLIC_HOSTS: ${BRAIN_PUBLIC_HOSTS:-localhost}
+    ports:
+      - "127.0.0.1:${BRAIN_PORT:-8788}:8788"
+    volumes:
+      - brain-data:/data
+      - ./tokens.json:/run/secrets/brain/tokens.json:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  brain-data:
