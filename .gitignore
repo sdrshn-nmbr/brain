@@ -1,0 +1,14 @@
+.venv/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+dist/
+*.pyc
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+data/
+.env
+.DS_Store
+tokens.json
+*.zip

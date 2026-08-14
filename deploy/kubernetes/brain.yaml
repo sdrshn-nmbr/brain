@@ -1,0 +1,107 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: brain
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: brain-data
+  namespace: brain
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: brain
+  namespace: brain
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: brain
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: brain
+    spec:
+      securityContext:
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: brain
+          image: ghcr.io/sdrshn-nmbr/brain:latest
+          imagePullPolicy: Always
+          env:
+            - name: BRAIN_DATA_DIR
+              value: /data
+            - name: BRAIN_AUTH_MODE
+              value: token
+            - name: BRAIN_TOKENS_FILE
+              value: /run/secrets/brain/tokens.json
+            - name: BRAIN_ALLOWED_REPOSITORIES
+              value: github.com/example/example
+            - name: BRAIN_PUBLIC_HOSTS
+              value: brain.example.com
+            - name: BRAIN_VISIBILITY
+              value: example organization
+          ports:
+            - name: http
+              containerPort: 8788
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: auth
+              mountPath: /run/secrets/brain
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsGroup: 1000
+            runAsNonRoot: true
+            runAsUser: 1000
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: brain-data
+        - name: auth
+          secret:
+            secretName: brain-auth
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: brain
+  namespace: brain
+spec:
+  selector:
+    app.kubernetes.io/name: brain
+  ports:
+    - name: http
+      port: 8788
+      targetPort: http
