@@ -519,6 +519,8 @@ def main() -> None:
             publication_archive = delta_path
             publication_manifest = read_manifest(publication_archive)
             publication_scope = upload_scope(scope_from_manifest(publication_manifest, args.visibility))
+            if args.machine:
+                publication_scope["machine"] = args.machine
             archive_sha256 = sha256_file(publication_archive)
             prepared = client.call(
                 "prepare_upload",

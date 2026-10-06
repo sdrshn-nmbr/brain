@@ -11,6 +11,61 @@ from collector import sync
 from collector.archive import ArchiveEntry, object_member, write_entries
 
 
+def test_personal_sync_preserves_machine_when_preparing_delta(tmp_path: Path, monkeypatch) -> None:
+    fingerprint = "1" * 64
+    digest = "a" * 64
+    entries_path = "export/codex/session.entries.ndjson.zst"
+    manifest = {
+        "sessions": [
+            {
+                "uuid": "session",
+                "source": "codex",
+                "repository": "local:unscoped",
+                "session_fingerprint": fingerprint,
+                "entries_path": entries_path,
+            }
+        ],
+        "object_count": 1,
+    }
+
+    def export_process(command, *, check):
+        assert check
+        archive_path = Path(command[command.index("--output") + 1])
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            write_entries(archive, entries_path, [ArchiveEntry(0, "assistant", None, None, "entry", digest)])
+            archive.writestr(object_member("export", digest), zstd.ZstdCompressor().compress(b"body"))
+            archive.writestr("export/_manifest.json", json.dumps(manifest))
+
+    class Client:
+        def __init__(self, endpoint):
+            assert endpoint == "https://brain.example/mcp"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def call(self, name, arguments):
+            if name == "access":
+                return {"mode": "personal", "visibility": "personal"}
+            if name == "plan_upload":
+                return {"missingSessionFingerprints": [fingerprint]}
+            if name == "missing_blobs":
+                return {"missingBlobHashes": [digest]}
+            assert name == "prepare_upload"
+            assert arguments["scope"]["machine"] == "mac"
+            assert arguments["scope"]["visibility"] == "personal"
+            return {"id": "upload", "status": "complete", "result": {"sessions": 1}}
+
+    monkeypatch.setattr(sync, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(sync.subprocess, "run", export_process)
+    monkeypatch.setattr(sync, "MCPClient", Client)
+    monkeypatch.setattr(sync.sys, "argv", ["brain-sync", "--endpoint", "https://brain.example/mcp", "--machine", "mac"])
+    sync.main()
+    assert sync.read_machine_since("mac", "https://brain.example/mcp") is not None
+
+
 def test_lightweight_mcp_call_accepts_json_and_sse(monkeypatch) -> None:
     captured = {}
 
