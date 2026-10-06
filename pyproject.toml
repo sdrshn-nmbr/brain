@@ -8,8 +8,10 @@ authors = [{ name = "Sudarshan Nambiar" }]
 requires-python = ">=3.11"
 dependencies = [
   "mcp>=2,<3",
+  "model2vec>=0.6,<1",
   "pydantic>=2.12,<3",
   "rich>=14,<15",
+  "sqlite-vec>=0.1.9,<0.2",
   "uvicorn>=0.35,<1",
   "zstandard>=0.22,<1",
 ]
@@ -32,6 +34,7 @@ dev = [
 [project.scripts]
 brain = "brain.server:main"
 brain-export = "collector.export.export_history:main"
+brain-eval = "brain.evaluate:main"
 brain-ingest = "collector.ingest.ingest:main"
 brain-sync = "collector.sync:main"
 brain-token = "brain.token:main"

@@ -533,9 +533,9 @@ def create_archive_ingester(config: Config, corpus: CorpusStore) -> IngestArchiv
             if not row:
                 raise RuntimeError(f"Ingest completed without an import record for archive {archive_sha256}")
             result = {"importId": row[0], "sessionsKept": row[1], "sessionsSkipped": row[2]}
-
-            return result
         finally:
             corpus.end_update()
+        result["vectorsAdded"] = await asyncio.to_thread(corpus.index_vectors)
+        return result
 
     return ingest

@@ -32,7 +32,9 @@ from brain.auth import (
 )
 from brain.config import Config, load_config
 from brain.corpus import CorpusStore
+from brain.learning import Usage
 from brain.observability import RequestLog, observable_arguments, observable_client, utc_now
+from brain.semantic import Semantic
 from brain.uploads import UploadManager, create_archive_ingester
 from collector.ingest.ingest import init_db, init_objects_db
 
@@ -424,16 +426,19 @@ def create_server(config: Config, corpus: CorpusStore, uploads: UploadManager, r
     ) -> dict[str, Any]:
         identity_from_context(ctx, config)
         cancel_event = threading.Event()
+        filters = {
+            "person": person,
+            "repository": repository,
+            "source": source,
+            "since": since,
+            "roles": roles,
+            "include_subagents": includeSubagents,
+        }
         try:
             result = await asyncio.to_thread(
                 corpus.read().search,
                 query=query,
-                person=person,
-                repository=repository,
-                source=source,
-                since=since,
-                roles=roles,
-                include_subagents=includeSubagents,
+                **filters,
                 limit=limit,
                 max_hits_per_session=maxHitsPerSession,
                 deadline_seconds=config.search_timeout_seconds,
@@ -443,6 +448,8 @@ def create_server(config: Config, corpus: CorpusStore, uploads: UploadManager, r
             cancel_event.set()
             logger.warning(json.dumps({"event": "search_cancelled"}))
             raise
+        if corpus.usage:
+            corpus.usage.record_search(query, filters, [item["sessionId"] for item in result])
         return {"result": result}
 
     @mcp.tool(
@@ -488,16 +495,17 @@ def create_server(config: Config, corpus: CorpusStore, uploads: UploadManager, r
         maxChars: int = 50_000,
     ) -> dict[str, Any]:
         identity_from_context(ctx, config)
-        return {
-            "result": corpus.read().read_session(
-                session_id=sessionId,
-                uuid=uuid,
-                person=person,
-                offset=offset,
-                limit=limit,
-                max_chars=maxChars,
-            )
-        }
+        result = corpus.read().read_session(
+            session_id=sessionId,
+            uuid=uuid,
+            person=person,
+            offset=offset,
+            limit=limit,
+            max_chars=maxChars,
+        )
+        if corpus.usage and not result["ambiguous"]:
+            corpus.usage.record_read(result["session"]["sessionId"])
+        return {"result": result}
 
     @mcp.tool(
         title="Inspect Brain coverage",
@@ -669,7 +677,11 @@ def create_app(config: Config | None = None):
     if not objects_path.exists():
         with sqlite3.connect(objects_path) as objects:
             init_objects_db(objects)
-    corpus = CorpusStore(config.data_dir)
+    corpus = CorpusStore(
+        config.data_dir,
+        semantic=Semantic(config.data_dir, config.embedding_model) if config.embedding_model else None,
+        usage=Usage(config.data_dir) if config.mode == "personal" else None,
+    )
     uploads = UploadManager(
         config.data_dir,
         config.max_upload_bytes,
@@ -706,10 +718,12 @@ def create_app(config: Config | None = None):
     @asynccontextmanager
     async def lifespan(application):
         uploads.start()
+        backfill = asyncio.create_task(asyncio.to_thread(corpus.index_vectors))
         try:
             async with sdk_lifespan(application):
                 yield
         finally:
+            await backfill
             await uploads.wait()
             uploads.close()
             request_log.close()

@@ -6,12 +6,16 @@ import re
 import sqlite3
 import threading
 import time
+from collections import defaultdict
 from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 import zstandard as zstd
+
+from brain.learning import Usage
+from brain.semantic import Semantic
 
 STOPWORDS = {
     "a",
@@ -51,17 +55,31 @@ STOPWORDS = {
 }
 
 BodyLoader = Callable[[str], str]
+Nearest = Callable[[str, int], list[int]]
+Priors = Callable[[], dict[int, float]]
 SQLITE_PROGRESS_STEPS = 1_000
-SEARCH_SQL = """
-    WITH matched_blobs(blob_id) AS MATERIALIZED (
-        SELECT rowid FROM blobs_fts WHERE blobs_fts MATCH ?
+RRF_K = 60
+SEMANTIC_CANDIDATES = 200
+HITS_PER_SESSION_SCORE = 3
+PRIOR_WEIGHT = 0.01
+ENTRY_COLUMNS = "s.*, s.id AS session_id, e.seq, e.role, e.ts, e.header_line, e.blob_id, b.hash AS blob_hash"
+SEARCH_SQL = f"""
+    WITH matched_blobs(blob_id, score) AS MATERIALIZED (
+        SELECT rowid, bm25(blobs_fts) FROM blobs_fts WHERE blobs_fts MATCH ?
     )
-    SELECT s.*, s.id AS session_id, e.seq, e.role, e.ts, e.header_line, b.hash AS blob_hash
+    SELECT {ENTRY_COLUMNS}, m.score
     FROM matched_blobs m
     CROSS JOIN entries AS e INDEXED BY idx_entries_blob
     JOIN sessions s ON s.id = e.session_id
     JOIN blobs b ON b.id = m.blob_id
     WHERE e.blob_id = m.blob_id
+"""
+VECTOR_SQL = f"""
+    SELECT {ENTRY_COLUMNS}
+    FROM entries AS e INDEXED BY idx_entries_blob
+    JOIN sessions s ON s.id = e.session_id
+    JOIN blobs b ON b.id = e.blob_id
+    WHERE e.blob_id IN ({{placeholders}})
 """
 
 logger = logging.getLogger("brain.corpus")
@@ -114,11 +132,19 @@ def row_dict(row: sqlite3.Row) -> dict[str, Any]:
 
 
 class Corpus:
-    def __init__(self, data_dir: Path, load_body: BodyLoader | None = None) -> None:
+    def __init__(
+        self,
+        data_dir: Path,
+        load_body: BodyLoader | None = None,
+        nearest: Nearest | None = None,
+        priors: Priors | None = None,
+    ) -> None:
         self.data_dir = data_dir
         self.index_path = data_dir / "index.sqlite"
         self.objects_path = data_dir / "objects.sqlite"
         self._custom_body_loader = load_body
+        self.nearest = nearest
+        self.priors = priors
         with self._connection(self.index_path) as db:
             columns = {row[1] for row in db.execute("PRAGMA table_info(sessions)")}
         if "repository" not in columns:
@@ -156,6 +182,10 @@ class Corpus:
             return
         with self._connection(self.objects_path) as connection:
             yield connection
+
+    def load_bodies(self, digests: list[str]) -> list[str]:
+        with self._objects_connection() as objects_db:
+            return [self._load_body(digest, objects_db) for digest in digests]
 
     @staticmethod
     def _install_progress_handler(
@@ -198,36 +228,52 @@ class Corpus:
     ) -> list[dict[str, Any]]:
         started = time.perf_counter()
         terms, exact = parse_query(query)
-        if not terms:
+        semantic = None if exact else self.nearest
+        if not terms and semantic is None:
             raise ValueError("query has no searchable terms")
-        sql = SEARCH_SQL
-        params: list[Any] = [fts_expression(terms, exact)]
+        filters = ""
+        filter_params: list[Any] = []
         for column, value in (
             ("s.person", person),
             ("s.repository", repository.lower() if repository else None),
             ("s.source", source),
         ):
             if value:
-                sql += f" AND {column} = ?"
-                params.append(value)
+                filters += f" AND {column} = ?"
+                filter_params.append(value)
         if since:
-            sql += " AND s.started_at >= ?"
-            params.append(since)
+            filters += " AND s.started_at >= ?"
+            filter_params.append(since)
         if not include_subagents:
-            sql += " AND s.is_subagent = 0"
+            filters += " AND s.is_subagent = 0"
         selected_roles = ["user", "assistant"] if roles is None else roles
         if selected_roles:
-            sql += f" AND e.role IN ({','.join('?' for _ in selected_roles)})"
-            params.extend(selected_roles)
+            filters += f" AND e.role IN ({','.join('?' for _ in selected_roles)})"
+            filter_params.extend(selected_roles)
         if cancel_event is not None and cancel_event.is_set():
             raise SearchCancelled("Search was cancelled")
         deadline = started + deadline_seconds
+        vector_started = time.perf_counter()
+        nearest = semantic(query, SEMANTIC_CANDIDATES) if semantic else []
+        vector_ms = (time.perf_counter() - vector_started) * 1_000
         sql_started = time.perf_counter()
         try:
             with self._connection(self.index_path) as db:
                 self._install_progress_handler(db, cancel_event, deadline)
                 try:
-                    rows = db.execute(sql, params).fetchall()
+                    keyword_rows = (
+                        db.execute(SEARCH_SQL + filters, [fts_expression(terms, exact), *filter_params]).fetchall()
+                        if terms
+                        else []
+                    )
+                    vector_rows = (
+                        db.execute(
+                            VECTOR_SQL.format(placeholders=",".join("?" for _ in nearest)) + filters,
+                            [*nearest, *filter_params],
+                        ).fetchall()
+                        if nearest
+                        else []
+                    )
                 finally:
                     db.set_progress_handler(None, 0)
         except sqlite3.OperationalError as error:
@@ -247,12 +293,25 @@ class Corpus:
         sql_ms = (time.perf_counter() - sql_started) * 1_000
 
         grouping_started = time.perf_counter()
-        grouped: dict[int, tuple[sqlite3.Row, list[sqlite3.Row]]] = {}
-        for row in rows:
-            grouped.setdefault(row["session_id"], (row, []))[1].append(row)
+        blob_scores: dict[int, float] = defaultdict(float)
+        keyword_order = sorted({row["blob_id"]: row["score"] for row in keyword_rows}.items(), key=lambda item: item[1])
+        for rank, (blob_id, _score) in enumerate(keyword_order):
+            blob_scores[blob_id] += 1 / (RRF_K + rank + 1)
+        for rank, blob_id in enumerate(nearest):
+            blob_scores[blob_id] += 1 / (RRF_K + rank + 1)
+        grouped: dict[int, tuple[sqlite3.Row, dict[int, sqlite3.Row]]] = {}
+        for row in [*keyword_rows, *vector_rows]:
+            grouped.setdefault(row["session_id"], (row, {}))[1].setdefault(row["seq"], row)
+        priors = self.priors() if self.priors else {}
+        scored = []
+        for session, entries in grouped.values():
+            hits = sorted(entries.values(), key=lambda hit: blob_scores[hit["blob_id"]], reverse=True)
+            score = sum(blob_scores[hit["blob_id"]] for hit in hits[:HITS_PER_SESSION_SCORE])
+            score += PRIOR_WEIGHT * priors.get(session["session_id"], 0.0)
+            scored.append((score, session, hits))
         ordered = sorted(
-            grouped.values(),
-            key=lambda item: (len(item[1]), item[0]["started_at"] or ""),
+            scored,
+            key=lambda item: (item[0], item[1]["started_at"] or ""),
             reverse=True,
         )[: bounded(limit, 10, 50)]
         grouping_ms = (time.perf_counter() - grouping_started) * 1_000
@@ -271,6 +330,7 @@ class Corpus:
                     "cwd": session["cwd"],
                     "entryCount": session["entry_count"],
                     "hitCount": len(hits),
+                    "score": round(score, 5),
                     "hits": [
                         {
                             "seq": hit["seq"],
@@ -281,7 +341,7 @@ class Corpus:
                         for hit in hits[: bounded(max_hits_per_session, 5, 20)]
                     ],
                 }
-                for session, hits in ordered
+                for score, session, hits in ordered
             ]
         cas_ms = (time.perf_counter() - cas_started) * 1_000
         serialization_started = time.perf_counter()
@@ -293,9 +353,11 @@ class Corpus:
                     "event": "search_profile",
                     "queryTerms": len(terms),
                     "exact": exact,
-                    "matchedEntries": len(rows),
+                    "keywordEntries": len(keyword_rows),
+                    "semanticEntries": len(vector_rows),
                     "matchedSessions": len(grouped),
                     "returnedSessions": len(results),
+                    "vectorMs": round(vector_ms, 3),
                     "sqlMs": round(sql_ms, 3),
                     "groupingMs": round(grouping_ms, 3),
                     "casReadMs": round(cas_ms, 3),
@@ -470,15 +532,24 @@ class Corpus:
 
 
 class CorpusStore:
-    def __init__(self, data_dir: Path) -> None:
+    def __init__(self, data_dir: Path, semantic: Semantic | None = None, usage: Usage | None = None) -> None:
         self.data_dir = data_dir
         ensure_wal(data_dir / "index.sqlite")
         ensure_wal(data_dir / "objects.sqlite")
-        self._corpus = Corpus(data_dir)
+        self.semantic = semantic
+        self.usage = usage
+        self._corpus = Corpus(
+            data_dir,
+            nearest=semantic.nearest if semantic else None,
+            priors=usage.priors if usage else None,
+        )
         self._update_lock = threading.Lock()
 
     def read(self) -> Corpus:
         return self._corpus
+
+    def index_vectors(self) -> int:
+        return self.semantic.index_missing(self._corpus.load_bodies) if self.semantic else 0
 
     def begin_update(self) -> None:
         if not self._update_lock.acquire(blocking=False):
@@ -489,3 +560,5 @@ class CorpusStore:
 
     def close(self) -> None:
         self._corpus.close()
+        if self.usage:
+            self.usage.close()

@@ -46,6 +46,7 @@ def server_config(data_dir: Path, port: int) -> Config:
         allowed_hosts=["localhost", "127.0.0.1", "[::1]"],
         mode="team",
         allowed_repositories=frozenset({"github.com/acme/widget"}),
+        embedding_model=None,
         visibility="team",
         auth_mode="token",
         token_credentials=credentials,

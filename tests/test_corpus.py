@@ -1,3 +1,4 @@
+import math
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -135,3 +136,27 @@ def test_store_migrates_delete_mode_databases_to_wal_before_serving(corpus_dir: 
                 assert connection.execute("PRAGMA journal_mode").fetchone() == ("wal",)
     finally:
         store.close()
+
+
+def test_semantic_candidates_find_sessions_without_shared_words(corpus_dir: Path) -> None:
+    corpus = Corpus(corpus_dir, nearest=lambda _query, _k: [4])
+    results = corpus.search("how did we ship it")
+    assert [result["uuid"] for result in results] == ["44444444-4444-4444-4444-444444444444"]
+
+
+def test_exact_phrases_stay_keyword_only(corpus_dir: Path) -> None:
+    corpus = Corpus(corpus_dir, nearest=lambda _query, _k: [4])
+    results = corpus.search(f'"{D_FLASH_SENTENCE}"')
+    assert [result["uuid"] for result in results] == ["33333333-3333-3333-3333-333333333333"]
+
+
+def test_keyword_and_semantic_agreement_ranks_first(corpus_dir: Path) -> None:
+    corpus = Corpus(corpus_dir, nearest=lambda _query, _k: [3, 4])
+    results = corpus.search("deployment")
+    assert [result["uuid"][0] for result in results] == ["4", "3"]
+
+
+def test_sessions_that_proved_useful_rise(corpus_dir: Path) -> None:
+    corpus = Corpus(corpus_dir, nearest=lambda _query, _k: [3, 4], priors=lambda: {3: math.log1p(5)})
+    results = corpus.search("deployment")
+    assert [result["uuid"][0] for result in results] == ["3", "4"]
