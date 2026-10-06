@@ -124,11 +124,26 @@ uses a separate append-only object database for deduplicated bodies.
 Possible future directions:
 
 - A Turbopuffer backend for lexical search, vector search, and other indexes, with S3 for session bodies.
-- Hybrid semantic and full-text ranking.
 - Postgres or Turso when a deployment needs several writers or a managed database.
 - Go, Rust, async pipelines, or SIMD JSON parsing if profiles show CPU parsing is the next real limit.
 
 These are options, not required complexity.
+
+## How search ranks
+
+Search combines two candidate lists. Full-text search ranks bodies that contain every query term by BM25. A vector index
+ranks user and assistant messages by meaning, so a question can find an answer that uses different words. Reciprocal rank
+fusion merges the lists, and a session scores by its three best messages. Quoted phrases stay keyword-only.
+
+The vectors live in `vectors.sqlite` beside the index, through [sqlite-vec](https://github.com/asg017/sqlite-vec). A
+small static embedding model, `minishlab/potion-retrieval-32M` by default, runs on the server CPU, so no text leaves the
+machine. New messages are embedded after each upload. Changing `BRAIN_EMBEDDING_MODEL` rebuilds the vectors on the next
+start; `none` turns semantic search off.
+
+A personal Brain also learns from use. It records each search and treats a session read within 30 minutes of being
+returned as a useful result. Sessions that keep proving useful rank higher. Those same searches form an evaluation set:
+`brain-eval` replays them against the current ranking and reports recall and MRR, so a ranking or model change can be
+measured before it is kept. A team Brain records neither queries nor reads.
 
 ## Develop
 

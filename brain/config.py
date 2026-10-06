@@ -11,6 +11,7 @@ from brain.auth import AccessLevel, TokenCredential
 
 AUTH_MODES = {"token", "trusted-header", "tailscale", "none"}
 MODES = {"team", "personal"}
+DEFAULT_EMBEDDING_MODEL = "minishlab/potion-retrieval-32M"
 REPOSITORY_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*){2,}$")
 
 
@@ -96,6 +97,7 @@ class Config:
     allowed_hosts: list[str]
     mode: str
     allowed_repositories: frozenset[str] | None
+    embedding_model: str | None
     visibility: str
     auth_mode: str
     token_credentials: tuple[TokenCredential, ...]
@@ -169,6 +171,9 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         allowed_hosts=["localhost", "127.0.0.1", "[::1]", *public_hosts],
         mode=mode,
         allowed_repositories=repositories if mode == "team" else None,
+        embedding_model=None
+        if values.get("BRAIN_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL).strip().lower() in {"", "none"}
+        else values.get("BRAIN_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL).strip(),
         visibility=visibility,
         auth_mode=auth_mode,
         token_credentials=token_credentials,
