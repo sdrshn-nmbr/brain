@@ -51,7 +51,7 @@ def test_trusted_headers_accept_explicit_access_from_a_proxy() -> None:
         require_append(identity)
 
 
-def test_tailscale_adapter_normalizes_users_and_keeps_workloads_read_only() -> None:
+def test_tailscale_adapter_normalizes_users_and_honors_read_only_workload_grants() -> None:
     user = authenticate_tailscale_headers(
         {"Tailscale-User-Login": "Alice@Example.com"},
         None,
@@ -121,15 +121,26 @@ def test_tailscale_required_capability_rejects_a_human_without_one() -> None:
         )
 
 
-def test_tailscale_tagged_workloads_remain_read_only_with_admin_capability() -> None:
+@pytest.mark.parametrize("access", list(AccessLevel))
+def test_tailscale_tagged_workloads_honor_capability_access(access: AccessLevel) -> None:
     identity = authenticate_tailscale_headers(
-        {"Tailscale-App-Capabilities": '{"brain.example/cap/access":[{"access":["admin"]}]}'},
+        {"Tailscale-App-Capabilities": f'{{"brain.example/cap/access":[{{"access":["{access}"]}}]}}'},
         None,
         frozenset(),
         "brain.example/cap/access",
         True,
     )
-    assert identity.access == AccessLevel.READ
+    assert identity.access == access
+    if access == AccessLevel.READ:
+        with pytest.raises(AuthenticationError, match="Append access"):
+            require_append(identity)
+    else:
+        assert require_append(identity) == "workload:tailscale-workload"
+    if access == AccessLevel.ADMIN:
+        require_admin(identity)
+    else:
+        with pytest.raises(AuthenticationError, match="administrator access"):
+            require_admin(identity)
 
 
 def test_tailscale_uses_the_strongest_matching_capability_rule() -> None:

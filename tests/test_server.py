@@ -97,7 +97,24 @@ def upload_archive_bytes() -> bytes:
     return output.getvalue()
 
 
-async def test_tailscale_mcp_upload_ingest_search_read_and_observability(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("headers", "actor", "identity_kind"),
+    [
+        ({"Tailscale-User-Login": "alice@example.com"}, "alice@example.com", "tailscale-user"),
+        (
+            {
+                "Tailscale-App-Capabilities": (
+                    '{"brain.example/cap/read":[{"access":["read","append","admin"],"actor":"agent-vm"}]}'
+                )
+            },
+            "workload:agent-vm",
+            "tailscale-workload",
+        ),
+    ],
+)
+async def test_tailscale_mcp_upload_ingest_search_read_and_observability(
+    tmp_path: Path, headers: dict[str, str], actor: str, identity_kind: str
+) -> None:
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
@@ -116,13 +133,13 @@ async def test_tailscale_mcp_upload_ingest_search_read_and_observability(tmp_pat
                 break
             await asyncio.sleep(0.01)
         assert server.started
-        async with httpx2.AsyncClient(headers={"Tailscale-User-Login": "alice@example.com"}) as http_client:
+        async with httpx2.AsyncClient(headers=headers) as http_client:
             transport = streamable_http_client(f"http://127.0.0.1:{port}/mcp", http_client=http_client)
             async with Client(transport) as client:
                 access = await client.call_tool("access", {})
                 assert access.structured_content["result"] == {
-                    "actor": "alice@example.com",
-                    "identityKind": "tailscale-user",
+                    "actor": actor,
+                    "identityKind": identity_kind,
                     "accessLevel": "admin",
                     "tools": [
                         "access",
@@ -179,7 +196,7 @@ async def test_tailscale_mcp_upload_ingest_search_read_and_observability(tmp_pat
                 assert unique_term in "".join(
                     entry["text"] for entry in session.structured_content["result"]["entries"]
                 )
-                requests = await client.call_tool("admin_requests", {"actor": "alice@example.com"})
+                requests = await client.call_tool("admin_requests", {"actor": actor})
                 observed_tools = {item["mcpName"] for item in requests.structured_content["result"]}
                 assert {"access", "prepare_upload", "commit_upload", "search", "read_session"} <= observed_tools
     finally:

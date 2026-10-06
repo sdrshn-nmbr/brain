@@ -151,7 +151,7 @@ def authenticate_tailscale_headers(
         return Identity(principal, "tailscale-user", access, normalized.get("tailscale-user-name", "").strip() or None)
 
     if capability_access is not None:
-        return Identity(f"workload:{capability_actor}", "tailscale-workload", AccessLevel.READ, capability_actor)
+        return Identity(f"workload:{capability_actor}", "tailscale-workload", capability_access, capability_actor)
     raise AuthenticationError("Tailscale user identity or configured app capability is required", 401)
 
 
