@@ -97,6 +97,24 @@ Tailnet users get append access by default. Named admins get observability tools
 capability and stay read-only. The included [policy templates](deploy/tailscale/) show read, append, and admin grants for
 fine-grained access. Bearer tokens and trusted proxy headers remain explicit alternatives.
 
+## Personal mode
+
+One person can run Brain over every agent session on every machine they use. Set `BRAIN_MODE=personal` and leave
+`BRAIN_ALLOWED_REPOSITORIES` unset. The server then accepts sessions from any folder and files each session under the
+machine that uploaded it, so search can narrow with `person=mac` or `person=devbox`. Folders without a Git origin are
+kept as `local:<cwd>`.
+
+Each machine publishes on a timer:
+
+```bash
+uvx --from git+https://github.com/sdrshn-nmbr/brain brain-sync \
+  --endpoint https://brain.your-tailnet.ts.net/mcp --machine mac
+```
+
+`--machine` is the standing consent for that machine: it publishes without a prompt and only re-reads session files
+changed since its last successful run. Keep personal mode behind an identity that only you hold, such as
+`BRAIN_TAILSCALE_ALLOWED_USERS` set to your own login.
+
 ## Why SQLite
 
 The current bottlenecks were query shape, archive packaging, and connection reuse. After those fixes, local SQLite FTS
