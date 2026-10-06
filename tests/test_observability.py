@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from brain.observability import RequestLog, observable_arguments
@@ -60,9 +61,19 @@ def test_summarizes_large_cas_negotiation_arguments() -> None:
     }
     assert observable_arguments("missing_blobs", {"blobHashes": ["a" * 64]}) == {"blobHashCount": 1}
     assert observable_arguments("search", {"query": "index compaction"}) == {
+        "query": "index compaction",
         "queryChars": 16,
         "querySha256": "6e2c0e93a4ac69bd9b0ebd49d10004483eb4bb955deb7021a00e6987ec19371e",
     }
+
+
+def test_search_query_is_recorded_with_a_bounded_copy_and_full_length_hash() -> None:
+    long_query = "q" * 5_000
+    arguments = observable_arguments("search", {"query": long_query})
+    assert arguments is not None
+    assert arguments["query"] == "q" * 2_000
+    assert arguments["queryChars"] == 5_000
+    assert arguments["querySha256"] == hashlib.sha256(long_query.encode()).hexdigest()
 
 
 def test_never_records_raw_unknown_or_oversized_arguments(tmp_path: Path) -> None:

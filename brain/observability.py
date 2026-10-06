@@ -14,6 +14,7 @@ def utc_now() -> str:
 
 
 MAX_OBSERVABLE_TEXT = 200
+MAX_OBSERVABLE_QUERY = 2_000
 MAX_OBSERVABLE_JSON_BYTES = 8 * 1024
 
 
@@ -27,6 +28,7 @@ def _query_summary(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, str):
         return None
     return {
+        "query": value[:MAX_OBSERVABLE_QUERY],
         "queryChars": len(value),
         "querySha256": hashlib.sha256(value.encode()).hexdigest(),
     }
