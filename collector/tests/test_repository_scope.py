@@ -95,6 +95,17 @@ def test_archive_id_slug_distinguishes_claude_forks(tmp_path: Path) -> None:
     assert archive_id_slug(job, "parent-session-id") == "parent-session-id__source-source-record-id"
 
 
+def test_archive_id_slug_keeps_codex_context_windows_apart(tmp_path: Path) -> None:
+    thread = "01a054f2-0e37-70c1-ba13-fdea97330b14"
+    first = Job("codex", tmp_path / f"rollout-2026-08-30T19-12-24-{thread}.jsonl", "jsonl")
+    later = Job(
+        "codex", tmp_path / f"rollout-2026-08-30T19-12-58-{thread}_01a054f2-9290-7d40-9856-fefa001c857d.jsonl", "jsonl"
+    )
+
+    assert archive_id_slug(first, thread) == thread
+    assert archive_id_slug(later, thread) != archive_id_slug(first, thread)
+
+
 def test_codex_desktop_side_chats_are_export_targets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
