@@ -1,0 +1,16 @@
+[Unit]
+Description=Personal Brain
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+User=%i
+EnvironmentFile=/etc/brain.env
+ExecStart=/bin/sh -lc 'exec uvx --refresh-package brain-mcp-server --from git+https://github.com/sdrshn-nmbr/brain@main brain'
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
