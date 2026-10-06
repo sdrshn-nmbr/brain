@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -191,7 +192,7 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         request_log_retention=request_log_retention,
         max_mcp_request_bytes=max_mcp_request_bytes,
         search_timeout_seconds=search_timeout_seconds,
-        python_executable=values.get("BRAIN_PYTHON", "python3"),
+        python_executable=values.get("BRAIN_PYTHON", sys.executable),
         ingest_script=(
             Path(values["BRAIN_INGEST_SCRIPT"]).expanduser().resolve() if values.get("BRAIN_INGEST_SCRIPT") else None
         ),

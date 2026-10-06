@@ -1,0 +1,13 @@
+dbs:
+  - path: /var/lib/brain/index.sqlite
+    replicas:
+      - url: s3://your-bucket/index.sqlite
+        endpoint: https://<account-id>.r2.cloudflarestorage.com
+  - path: /var/lib/brain/objects.sqlite
+    replicas:
+      - url: s3://your-bucket/objects.sqlite
+        endpoint: https://<account-id>.r2.cloudflarestorage.com
+  - path: /var/lib/brain/usage.sqlite
+    replicas:
+      - url: s3://your-bucket/usage.sqlite
+        endpoint: https://<account-id>.r2.cloudflarestorage.com

@@ -1,0 +1,8 @@
+[Unit]
+Description=Upload this machine's agent sessions to Brain
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -lc 'exec uvx --refresh-package brain-mcp-server --from git+https://github.com/sdrshn-nmbr/brain brain-sync --endpoint https://brain.your-tailnet.ts.net/mcp --machine devbox'
+Nice=10
+UMask=0077
