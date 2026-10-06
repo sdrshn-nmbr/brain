@@ -95,8 +95,8 @@ Scope is checked by the exporter, upload server, and ingester. Repository IDs in
 `github.com/acme/api` or `gitlab.example.com/platform/models/recommender`.
 
 Tailnet users get append access by default. Named admins get observability tools. Tagged workloads need a Tailscale app
-capability and stay read-only. The included [policy templates](deploy/tailscale/) show read, append, and admin grants for
-fine-grained access. Bearer tokens and trusted proxy headers remain explicit alternatives.
+capability and receive the access it grants. The included [policy templates](deploy/tailscale/) show read, append, and
+admin grants for fine-grained access. Bearer tokens and trusted proxy headers remain explicit alternatives.
 
 ## Personal mode
 

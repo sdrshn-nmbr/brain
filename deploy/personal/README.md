@@ -2,8 +2,8 @@
 
 One Linux machine on your tailnet holds every agent session from every machine you use. Each machine uploads its own
 sessions on a timer, and any agent searches through `https://<host>.<tailnet>.ts.net/mcp`. Tailscale is the only door:
-Brain trusts the login that Tailscale Serve attaches to each request, and `BRAIN_TAILSCALE_ALLOWED_USERS` admits only
-you.
+Brain trusts the login or app capability that Tailscale Serve attaches to each request. Set
+`BRAIN_TAILSCALE_ALLOWED_USERS` to your login, and grant your tagged VMs the same access through an app capability.
 
 ## Server
 
@@ -14,7 +14,7 @@ sudo install -d -o "$USER" -m 700 /var/lib/brain
 sudo cp brain@.service /etc/systemd/system/
 sudo cp brain.env /etc/brain.env    # set your login and tailnet host
 sudo systemctl enable --now "brain@$USER"
-sudo tailscale serve --bg 8788
+sudo tailscale serve --bg --accept-app-caps=example.com/cap/brain 8788
 ```
 
 The service runs the latest `main` through `uvx`, so a restart is an upgrade. The first start downloads the embedding

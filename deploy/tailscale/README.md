@@ -7,5 +7,5 @@ Replace `example.com/cap/brain` with a capability under a domain you control.
 - `policy.hujson` shows append access for people, admin access for Brain operators, and read-only access for tagged
   workloads.
 
-Set `BRAIN_TAILSCALE_REQUIRE_CAPABILITY=true` when every human caller should be authorized by these grants. Brain always
-keeps tagged workload identities read-only.
+Set `BRAIN_TAILSCALE_REQUIRE_CAPABILITY=true` when every human caller should be authorized by these grants. Tagged
+workloads always need a capability and receive its strongest granted access level: `read`, `append`, or `admin`.
