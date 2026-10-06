@@ -195,7 +195,7 @@ def test_export_writes_zstd_ndjson_and_unique_cas_objects(tmp_path: Path, monkey
     monkeypatch.setattr(
         export_history,
         "parse_job",
-        lambda _job: export_history.Outcome(job, session, repository),
+        lambda _job, _every_folder: export_history.Outcome(job, session, repository),
     )
     output = tmp_path / "export.zip"
     args = Namespace(
@@ -205,6 +205,7 @@ def test_export_writes_zstd_ndjson_and_unique_cas_objects(tmp_path: Path, monkey
         since=None,
         until=None,
         repository=["github.com/acme/widget"],
+        every_folder=False,
         project=None,
         output=str(output),
         workers=1,
@@ -245,3 +246,14 @@ def test_ingestor_keeps_wal_artifacts_online(tmp_path: Path) -> None:
         assert connection.execute("PRAGMA table_info(sessions)").fetchall()
     finally:
         connection.close()
+
+
+def test_every_folder_labels_sessions_outside_git_by_directory(monkeypatch) -> None:
+    parsed = SimpleNamespace(cwd="/Users/Me/Downloads")
+    monkeypatch.setattr(export_history.codex_source, "parse_export_target", lambda _target: parsed)
+    monkeypatch.setattr(export_history, "resolve_repository", lambda _cwd: None)
+    job = Job("codex", Path("/tmp/session.jsonl"), "jsonl")
+
+    assert parse_job(job).repository is None
+    labelled = parse_job(job, every_folder=True).repository
+    assert labelled is not None and labelled.slug == "local:/users/me/downloads"

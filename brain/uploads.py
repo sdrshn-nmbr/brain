@@ -97,7 +97,7 @@ class UploadManager:
         max_pending_bytes_per_owner: int,
         upload_ttl_seconds: int,
         upload_receive_timeout_seconds: int,
-        allowed_repositories: frozenset[str],
+        allowed_repositories: frozenset[str] | None,
         visibility: str,
         ingest_archive: IngestArchive,
     ) -> None:
@@ -202,10 +202,18 @@ class UploadManager:
             raise ValueError("scope.sessionCount must be a positive integer")
         repositories = scope.get("repositories") or []
         sources = scope.get("sources") or []
-        if not repositories or any(repository not in self.allowed_repositories for repository in repositories):
+        if not repositories or (
+            self.allowed_repositories is not None
+            and any(repository not in self.allowed_repositories for repository in repositories)
+        ):
             raise ValueError("scope.repositories contains a repository outside the Brain allowlist")
         if not sources or any(source not in ALLOWED_SOURCES for source in sources):
             raise ValueError("scope.sources contains an unsupported agent source")
+        machine = scope.get("machine")
+        if self.allowed_repositories is None and not machine:
+            raise ValueError("A personal Brain labels sessions by machine; scope.machine is required")
+        if self.allowed_repositories is not None and machine:
+            raise ValueError("scope.machine is only accepted by a personal Brain")
 
         self.garbage_collect()
         with self._db_lock:
@@ -251,7 +259,7 @@ class UploadManager:
                 (
                     upload_id,
                     owner_principal,
-                    self.person_for(owner_principal),
+                    machine or self.person_for(owner_principal),
                     archive_sha256,
                     archive_bytes,
                     str(archive_path),
@@ -497,7 +505,7 @@ def create_archive_ingester(config: Config, corpus: CorpusStore) -> IngestArchiv
                 str(archive_path),
                 *(
                     argument
-                    for repository in sorted(config.allowed_repositories)
+                    for repository in sorted(config.allowed_repositories or ())
                     for argument in ("--allowed-repository", repository)
                 ),
                 stdout=asyncio.subprocess.PIPE,

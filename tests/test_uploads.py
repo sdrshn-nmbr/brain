@@ -315,3 +315,37 @@ def test_prepare_is_idempotent_and_requires_confirmation(manager) -> None:
     assert upload_manager.prepare("alice@example.com", digest, len(body), archive_scope(), True)["status"] == "prepared"
     with pytest.raises(ValueError, match="confirm publication"):
         upload_manager.prepare("bob@example.com", digest, len(body), archive_scope(), False)
+
+
+async def test_personal_brain_files_sessions_under_the_uploading_machine(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    async def ingest(person: str, _path: Path, _digest: str) -> dict[str, int]:
+        calls.append(person)
+        return {"importId": 1, "sessionsKept": 3, "sessionsSkipped": 0}
+
+    upload_manager = UploadManager(tmp_path, 1024 * 1024, 2 * 1024 * 1024, 3600, 60, None, "personal", ingest)
+    try:
+        body = valid_archive({"repository": "local:/users/me/downloads"})
+        scope = archive_scope() | {
+            "repositories": ["local:/users/me/downloads"],
+            "visibility": "personal",
+            "machine": "mac",
+        }
+        with pytest.raises(ValueError, match="scope.machine is required"):
+            upload_manager.prepare("me@github", "a" * 64, 100, {k: v for k, v in scope.items() if k != "machine"}, True)
+        digest = hashlib.sha256(body).hexdigest()
+        prepared = upload_manager.prepare("me@github", digest, len(body), scope, True)
+        await upload_manager.receive("me@github", prepared["id"], request_with_body(body))
+        upload_manager.commit("me@github", prepared["id"])
+        await upload_manager.wait()
+        assert upload_manager.status("me@github", prepared["id"])["status"] == "complete"
+        assert calls == ["mac"]
+    finally:
+        upload_manager.close()
+
+
+def test_team_brain_rejects_machine_labels(manager) -> None:
+    upload_manager, _calls = manager
+    with pytest.raises(ValueError, match="only accepted by a personal Brain"):
+        upload_manager.prepare("alice@example.com", "a" * 64, 100, archive_scope() | {"machine": "mac"}, True)

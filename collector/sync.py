@@ -23,6 +23,8 @@ from collector.archive import iter_session_hashes, object_member
 
 DEFAULT_ENDPOINT = os.environ.get("BRAIN_MCP_URL", "http://127.0.0.1:8788/mcp")
 SOURCES = ("claude", "codex", "cursor")
+STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "brain"
+RESCAN_MARGIN_SECONDS = 600
 
 
 def request_headers() -> dict[str, str]:
@@ -197,6 +199,8 @@ def run_export(args: argparse.Namespace, output: Path) -> None:
     ]
     for repository in args.repository or []:
         command.extend(["--repository", repository])
+    if args.machine:
+        command.append("--every-folder")
     for option in ("project", "since", "until"):
         value = getattr(args, option)
         if value:
@@ -231,8 +235,29 @@ def scope_from_manifest(manifest: dict, visibility: str = "organization") -> dic
 
 
 def upload_scope(scope: dict) -> dict:
-    fields = ("repositories", "sources", "since", "until", "sessionCount", "visibility")
-    return {field: scope[field] for field in fields}
+    fields = ("repositories", "sources", "since", "until", "sessionCount", "visibility", "machine")
+    return {field: scope[field] for field in fields if field in scope}
+
+
+def machine_state_path(machine: str) -> Path:
+    return STATE_DIR / f"{machine}.json"
+
+
+def read_machine_since(machine: str, endpoint: str) -> str | None:
+    path = machine_state_path(machine)
+    if not path.exists():
+        return None
+    state = json.loads(path.read_text())
+    return state["since"] if state.get("endpoint") == endpoint else None
+
+
+def write_machine_since(machine: str, endpoint: str, started: float) -> None:
+    path = machine_state_path(machine)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    since = datetime.fromtimestamp(started - RESCAN_MARGIN_SECONDS, tz=UTC).isoformat()
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps({"endpoint": endpoint, "since": since}))
+    temporary.replace(path)
 
 
 def print_preview(scope: dict, manifest: dict, archive: Path) -> None:
@@ -407,9 +432,24 @@ def main() -> None:
         action="store_true",
         help="Queue ingestion and return without polling for completion",
     )
+    parser.add_argument(
+        "--machine",
+        help=(
+            "Publish every folder to a personal Brain under this machine label, without a prompt. "
+            "Only files changed since the last successful run are exported."
+        ),
+    )
     args = parser.parse_args()
 
-    if not args.archive and not args.repository:
+    started = time.time()
+    if args.machine:
+        if args.repository or args.archive:
+            parser.error("--machine publishes every folder; drop --repository and --archive")
+        args.yes = True
+        args.visibility = "personal"
+        args.since = args.since or read_machine_since(args.machine, args.endpoint)
+        args.output = args.output or STATE_DIR / f"{args.machine}-upload.zip"
+    if not args.archive and not args.repository and not args.machine:
         parser.error("at least one --repository is required when building an archive")
 
     if args.archive:
@@ -425,7 +465,14 @@ def main() -> None:
         run_export(args, output)
     manifest = read_manifest(output)
     scope = scope_from_manifest(manifest, args.visibility)
+    if args.machine:
+        scope["machine"] = args.machine
     if scope["sessionCount"] == 0:
+        if args.machine:
+            output.unlink()
+            write_machine_since(args.machine, args.endpoint, started)
+            print(f"No sessions changed on {args.machine} since {args.since}.")
+            return
         raise RuntimeError("the selected scope contains no sessions")
     print_preview(scope, manifest, output)
     if args.dry_run:
@@ -439,8 +486,12 @@ def main() -> None:
 
     with MCPClient(args.endpoint) as client:
         access = client.call("access", {})
-        configured_repositories = set(access.get("allowedRepositories") or [])
-        if not set(scope["repositories"]).issubset(configured_repositories):
+        if (access.get("mode") == "personal") != bool(args.machine):
+            raise RuntimeError(
+                f"Brain at {args.endpoint} runs in {access.get('mode', 'team')} mode; "
+                + ("drop --machine" if args.machine else "publish with --machine <label>")
+            )
+        if not args.machine and not set(scope["repositories"]).issubset(set(access.get("allowedRepositories") or [])):
             raise RuntimeError("The archive contains a repository outside the server allowlist")
         if scope["visibility"] != access.get("visibility"):
             raise RuntimeError(
@@ -459,6 +510,9 @@ def main() -> None:
         )
         if delta_path is None:
             print("Brain is already current; no archive bytes were uploaded.")
+            if args.machine:
+                output.unlink()
+                write_machine_since(args.machine, args.endpoint, started)
             return
 
         try:
@@ -501,6 +555,9 @@ def main() -> None:
             if status != "complete":
                 raise RuntimeError(f"upload {upload_id} ended in {status}: {record.get('error')}")
             print(f"Brain upload complete: {json.dumps(record['result'], sort_keys=True)}")
+            if args.machine:
+                output.unlink()
+                write_machine_since(args.machine, args.endpoint, started)
         finally:
             cleanup_delta(delta_path, profile["usedOriginalArchive"])
 

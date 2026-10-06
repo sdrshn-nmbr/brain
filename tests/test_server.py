@@ -44,6 +44,7 @@ def server_config(data_dir: Path, port: int) -> Config:
         host="127.0.0.1",
         port=port,
         allowed_hosts=["localhost", "127.0.0.1", "[::1]"],
+        mode="team",
         allowed_repositories=frozenset({"github.com/acme/widget"}),
         visibility="team",
         auth_mode="token",
@@ -138,6 +139,7 @@ async def test_tailscale_mcp_upload_ingest_search_read_and_observability(tmp_pat
                         "admin_requests",
                         "admin_request_stats",
                     ],
+                    "mode": "team",
                     "allowedRepositories": ["github.com/acme/widget"],
                     "visibility": "team",
                 }

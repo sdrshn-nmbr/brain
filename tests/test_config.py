@@ -87,3 +87,11 @@ def test_rejects_invalid_search_timeout() -> None:
 def test_rejects_invalid_positive_integer_settings(name: str) -> None:
     with pytest.raises(ValueError, match="positive integer"):
         load_config({**base_env(), name: "0"})
+
+
+def test_personal_mode_accepts_every_repository() -> None:
+    config = load_config({"BRAIN_MODE": "personal"})
+    assert config.allowed_repositories is None
+    assert config.visibility == "personal"
+    with pytest.raises(ValueError, match="unset BRAIN_ALLOWED_REPOSITORIES"):
+        load_config({"BRAIN_MODE": "personal", **base_env()})
