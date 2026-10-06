@@ -25,7 +25,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import sys
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -282,7 +281,6 @@ def run_export(args: argparse.Namespace, console: Console) -> None:
     discovered_jobs = [j for jobs in jobs_by_source.values() for j in jobs]
     if not discovered_jobs:
         console.print("[yellow]No sessions found for the given scope.[/yellow]")
-        sys.exit(1)
 
     for name in SOURCE_NAMES:
         if name in jobs_by_source:
