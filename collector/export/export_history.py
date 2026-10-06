@@ -110,10 +110,10 @@ def filename_timestamp(started_at: str | None) -> str:
 
 def archive_id_slug(job: Job, session_id: str) -> str:
     session_slug = session_id.replace("/", "__")
-    if job.source != "claude":
+    if job.backend != "jsonl" or job.source not in {"claude", "codex"}:
         return session_slug
     source_id = Path(job.target).stem
-    if source_id == session_id:
+    if source_id == session_id or (job.source == "codex" and source_id.endswith(f"-{session_id}")):
         return session_slug
     return f"{session_slug}__source-{slugify(source_id, max_len=80)}"
 
@@ -352,6 +352,14 @@ def run_export(args: argparse.Namespace, console: Console) -> None:
                     ts_slug = filename_timestamp(session.started_at)
                     project_slug = slugify(session.cwd)
                     entries_arc_name = f"{wrapper}/{job.source}/{id_slug}__{ts_slug}__{project_slug}.entries.ndjson.zst"
+                    if entries_arc_name in zf.NameToInfo:
+                        totals[job.source].failed += 1
+                        console.print(
+                            f"[red]FAILED[/red] [{job.source}] {target_identifier(job)}: "
+                            f"another session already uses archive member {entries_arc_name}",
+                            highlight=False,
+                        )
+                        continue
                     entries = archive_entries(session)
                     write_entries(zf, entries_arc_name, entries)
                     for entry, source_entry in zip(entries, session.entries, strict=True):
