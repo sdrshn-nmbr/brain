@@ -54,6 +54,7 @@ class UploadScope(BaseModel):
     until: str | None
     sessionCount: int = Field(gt=0)
     visibility: str = Field(min_length=1, max_length=100)
+    machine: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,31}$")
 
 
 def authenticate_headers(headers: Mapping[str, str] | None, config: Config) -> Identity:
@@ -395,7 +396,10 @@ def create_server(config: Config, corpus: CorpusStore, uploads: UploadManager, r
                 "identityKind": identity.kind,
                 "accessLevel": identity.access,
                 "tools": tools,
-                "allowedRepositories": sorted(config.allowed_repositories),
+                "mode": config.mode,
+                "allowedRepositories": None
+                if config.allowed_repositories is None
+                else sorted(config.allowed_repositories),
                 "visibility": config.visibility,
             }
         }

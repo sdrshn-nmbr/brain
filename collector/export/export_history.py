@@ -148,7 +148,11 @@ def discover_jobs(sources: set[str], *, include_subagents: bool, include_archive
     return jobs
 
 
-def parse_job(job: Job) -> Outcome:
+def local_repository(cwd: str | None) -> RepositoryIdentity:
+    return RepositoryIdentity(slug=f"local:{(cwd or 'unscoped').lower()}", root=cwd or "", remote_url="")
+
+
+def parse_job(job: Job, every_folder: bool = False) -> Outcome:
     module = {"claude": claude_source, "codex": codex_source, "cursor": cursor_source}[job.source]
     try:
         if job.source == "codex" and job.backend == "desktop-side-chat":
@@ -166,7 +170,10 @@ def parse_job(job: Job) -> Outcome:
             session=None,
             error="parser returned no session (empty or unparseable file)",
         )
-    return Outcome(job=job, session=session, repository=resolve_repository(session.cwd))
+    repository = resolve_repository(session.cwd)
+    if repository is None and every_folder:
+        repository = local_repository(session.cwd)
+    return Outcome(job=job, session=session, repository=repository)
 
 
 def _parse_time_bound(value: str | None) -> float | None:
@@ -264,7 +271,9 @@ def run_export(args: argparse.Namespace, console: Console) -> None:
     until_ts = _parse_time_bound(args.until)
     configured_repositories = args.repository or []
     normalized = [normalize_repository_selector(repository) for repository in configured_repositories]
-    if not configured_repositories or any(repository is None for repository in normalized):
+    if args.every_folder and configured_repositories:
+        raise ValueError("--every-folder exports every repository; drop --repository")
+    if not args.every_folder and (not configured_repositories or any(repository is None for repository in normalized)):
         raise ValueError("At least one valid --repository is required")
     allowed_repositories = {repository for repository in normalized if repository is not None}
 
@@ -309,7 +318,7 @@ def run_export(args: argparse.Namespace, console: Console) -> None:
         with ThreadPoolExecutor(max_workers=args.workers) as ex:
             for batch_start in range(0, len(all_jobs), PARSE_BATCH_SIZE):
                 batch = all_jobs[batch_start : batch_start + PARSE_BATCH_SIZE]
-                futures = {ex.submit(parse_job, job): job for job in batch}
+                futures = {ex.submit(parse_job, job, args.every_folder): job for job in batch}
                 for fut in as_completed(futures):
                     job = futures[fut]
                     outcome = fut.result()
@@ -325,7 +334,9 @@ def run_export(args: argparse.Namespace, console: Console) -> None:
                         continue
 
                     session = outcome.session
-                    if outcome.repository is None or outcome.repository.slug not in allowed_repositories:
+                    if outcome.repository is None or (
+                        not args.every_folder and outcome.repository.slug not in allowed_repositories
+                    ):
                         totals[job.source].skipped_by_repository += 1
                         continue
                     if not passes_filters(
@@ -386,7 +397,7 @@ def run_export(args: argparse.Namespace, console: Console) -> None:
             "filters": {
                 "source": args.source,
                 "project": args.project,
-                "repositories": sorted(allowed_repositories),
+                "repositories": ["*"] if args.every_folder else sorted(allowed_repositories),
                 "since": args.since,
                 "until": args.until,
                 "exclude_subagents": args.exclude_subagents,
@@ -445,6 +456,11 @@ def main() -> None:
             "Repository to export as host/owner/repository, a Git remote URL, or GitHub owner/repository "
             "(repeatable and required)"
         ),
+    )
+    parser.add_argument(
+        "--every-folder",
+        action="store_true",
+        help="Export sessions from every folder; folders without a Git origin become local:<cwd>",
     )
     parser.add_argument(
         "--since",

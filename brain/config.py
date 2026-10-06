@@ -10,6 +10,7 @@ from pathlib import Path
 from brain.auth import AccessLevel, TokenCredential
 
 AUTH_MODES = {"token", "trusted-header", "tailscale", "none"}
+MODES = {"team", "personal"}
 REPOSITORY_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*){2,}$")
 
 
@@ -93,7 +94,8 @@ class Config:
     host: str
     port: int
     allowed_hosts: list[str]
-    allowed_repositories: frozenset[str]
+    mode: str
+    allowed_repositories: frozenset[str] | None
     visibility: str
     auth_mode: str
     token_credentials: tuple[TokenCredential, ...]
@@ -143,12 +145,17 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     bind_host = values.get("BRAIN_HOST", "127.0.0.1").strip()
     if auth_mode == "none" and bind_host not in {"127.0.0.1", "::1", "localhost"}:
         raise ValueError("BRAIN_AUTH_MODE=none may only bind to loopback")
+    mode = values.get("BRAIN_MODE", "team").strip().lower()
+    if mode not in MODES:
+        raise ValueError("BRAIN_MODE must be team or personal")
     repositories = normalized_repositories(values.get("BRAIN_ALLOWED_REPOSITORIES"))
-    if not repositories:
+    if mode == "team" and not repositories:
         raise ValueError("BRAIN_ALLOWED_REPOSITORIES must list at least one host/owner/repository")
+    if mode == "personal" and repositories:
+        raise ValueError("BRAIN_MODE=personal accepts every repository; unset BRAIN_ALLOWED_REPOSITORIES")
 
     data_dir = Path(values.get("BRAIN_DATA_DIR", "./data")).expanduser().resolve()
-    visibility = values.get("BRAIN_VISIBILITY", "organization").strip()
+    visibility = values.get("BRAIN_VISIBILITY", "personal" if mode == "personal" else "organization").strip()
     if not visibility or len(visibility) > 100:
         raise ValueError("BRAIN_VISIBILITY must be a non-empty label of at most 100 characters")
     tailscale_allowed = frozenset(
@@ -160,7 +167,8 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         host=bind_host,
         port=port,
         allowed_hosts=["localhost", "127.0.0.1", "[::1]", *public_hosts],
-        allowed_repositories=repositories,
+        mode=mode,
+        allowed_repositories=repositories if mode == "team" else None,
         visibility=visibility,
         auth_mode=auth_mode,
         token_credentials=token_credentials,
