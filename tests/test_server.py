@@ -24,7 +24,7 @@ from brain.auth import AccessLevel, TokenCredential
 from brain.config import Config
 from brain.corpus import CorpusStore
 from brain.observability import RequestLog
-from brain.server import create_app, create_server
+from brain.server import BROWSER_REDIRECT_URL, create_app, create_server
 from brain.uploads import UploadManager
 from collector.archive import stable_session_key
 from scripts.mcp_smoke import build_smoke_archive
@@ -206,6 +206,11 @@ async def test_remote_mcp_client_auth_search_and_read(corpus_dir: Path) -> None:
             assert response.status_code == 401
 
         append_headers = {"Authorization": "Bearer append-token"}
+        async with httpx.AsyncClient(headers=append_headers) as browser:
+            response = await browser.get(f"http://127.0.0.1:{port}/mcp", headers={"Accept": "text/html"})
+            assert response.status_code == 302
+            assert response.headers["location"] == BROWSER_REDIRECT_URL
+
         async with httpx2.AsyncClient(headers=append_headers) as http_client:
             transport = streamable_http_client(f"http://127.0.0.1:{port}/mcp", http_client=http_client)
             async with Client(transport) as client:
@@ -324,7 +329,7 @@ async def test_remote_mcp_client_auth_search_and_read(corpus_dir: Path) -> None:
                 search_records = await client.call_tool("admin_requests", {"name": "search"})
                 search_arguments = search_records.structured_content["result"][0]["arguments"]
                 assert search_arguments["queryChars"] == len("detection boundary")
-                assert "detection boundary" not in str(search_arguments)
+                assert search_arguments["query"] == "detection boundary"
                 summary = await client.call_tool("admin_request_stats", {})
                 assert summary.structured_content["result"]["requestCount"] >= 4
 

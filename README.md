@@ -20,7 +20,8 @@ Brain is open source and cloud-neutral. AWS, another cloud, or one machine all w
 - Repository scope comes from the saved session directory's Git `origin`, not its folder name.
 - Claude Code, Codex, Cursor, subagents, archived Codex sessions, and recorded Codex Desktop side chats are supported.
 - Repeated text is stored once with SHA-256 content-addressed storage. Uploads send only missing sessions and bodies.
-- Admins can inspect bounded, redacted request records without storing raw query text or upload bodies.
+- Admins can audit bounded request records, including the first 2,000 characters of each search. Upload bodies and
+  responses are never stored.
 
 ## Run it
 

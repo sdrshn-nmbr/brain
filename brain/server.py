@@ -20,7 +20,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, RedirectResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from brain.auth import (
@@ -41,6 +41,7 @@ from collector.ingest.ingest import init_db, init_objects_db
 logger = logging.getLogger("brain")
 
 Source = Literal["claude", "codex", "cursor"]
+BROWSER_REDIRECT_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
@@ -246,6 +247,28 @@ class AuthorizationMiddleware:
                 request_bytes,
                 response_bytes,
                 "authentication_rejected",
+            )
+            return
+        if (
+            scope.get("path") == "/mcp"
+            and scope.get("method") == "GET"
+            and "text/html" in headers.get("accept", "").lower()
+        ):
+            await RedirectResponse(BROWSER_REDIRECT_URL, status_code=302)(scope, receive_with_capture, send_with_status)
+            await asyncio.to_thread(
+                self._record_request,
+                request_id,
+                started_at,
+                identity,
+                scope,
+                headers,
+                request_body,
+                response_body,
+                status_code or 302,
+                started,
+                request_bytes,
+                response_bytes,
+                None,
             )
             return
         try:

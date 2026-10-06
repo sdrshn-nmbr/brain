@@ -10,6 +10,8 @@ COPY collector ./collector
 RUN uv sync --frozen --no-dev
 
 FROM python:3.13-slim-bookworm
+# Nothing in the image runs Perl, and Debian ships no fix for its open CVEs, so the Essential package is removed.
+RUN dpkg --purge --force-remove-essential perl-base
 ENV BRAIN_DATA_DIR=/data \
     BRAIN_HOST=0.0.0.0 \
     BRAIN_PORT=8788 \
