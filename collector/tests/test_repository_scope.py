@@ -44,6 +44,31 @@ def test_exporter_is_self_contained_without_personal_past_skill(tmp_path: Path) 
     assert not (exporter.parents[1] / "sources" / "attachment_source.py").exists()
 
 
+def test_new_machine_sync_succeeds_without_chats_or_network_access(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "collector.sync",
+            "--endpoint",
+            "https://brain.invalid/mcp",
+            "--machine",
+            "new-vm",
+        ],
+        env={**os.environ, "HOME": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "No sessions changed on new-vm" in result.stdout
+    state_dir = tmp_path / ".local" / "state" / "brain"
+    assert not (state_dir / "new-vm-upload.zip").exists()
+    state = json.loads((state_dir / "new-vm.json").read_text())
+    assert state["endpoint"] == "https://brain.invalid/mcp"
+
+
 @pytest.mark.parametrize(
     ("remote", "expected"),
     [
