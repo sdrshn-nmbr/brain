@@ -65,7 +65,9 @@ def inserted_rowid(cursor: sqlite3.Cursor) -> int:
     return rowid
 
 
-def generation_is_newer(existing: sqlite3.Row, incoming: dict, incoming_entry_count: int) -> bool:
+def generation_is_newer(
+    existing: sqlite3.Row, incoming: dict, incoming_entry_count: int, incoming_export_timestamp: str | None
+) -> bool:
     existing_ended = existing["ended_at"]
     incoming_ended = incoming.get("ended_at")
     if existing_ended and incoming_ended and existing_ended != incoming_ended:
@@ -76,7 +78,10 @@ def generation_is_newer(existing: sqlite3.Row, incoming: dict, incoming_entry_co
         return True
     if existing_ended and not incoming_ended:
         return False
-    return incoming_entry_count > int(existing["entry_count"] or 0)
+    existing_entry_count = int(existing["entry_count"] or 0)
+    if incoming_entry_count != existing_entry_count:
+        return incoming_entry_count > existing_entry_count
+    return str(incoming_export_timestamp or "") > str(existing["export_timestamp"] or "")
 
 
 def legacy_session_fallback(export_path: str, uuid: str) -> str:
@@ -543,12 +548,13 @@ class Ingestor:
                     session_key = s.get("session_key")
                     if session_key:
                         replaced = self.conn.execute(
-                            """SELECT id, ended_at, entry_count FROM sessions
-                               WHERE person=? AND source=? AND session_key=?""",
+                            """SELECT s.id, s.ended_at, s.entry_count, i.export_timestamp FROM sessions s
+                               JOIN imports i ON i.id=s.import_id
+                               WHERE s.person=? AND s.source=? AND s.session_key=?""",
                             (person, source, session_key),
                         ).fetchone()
                         if replaced:
-                            if not generation_is_newer(replaced, s, len(entries)):
+                            if not generation_is_newer(replaced, s, len(entries), man.get("export_timestamp")):
                                 self.conn.execute(
                                     """INSERT OR IGNORE INTO skipped(import_id, export_path, reason, cwd)
                                        VALUES (?,?,?,?)""",

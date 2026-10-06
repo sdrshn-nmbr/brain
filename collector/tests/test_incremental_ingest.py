@@ -372,6 +372,25 @@ def test_stale_generation_cannot_replace_newer_session(tmp_path: Path) -> None:
         )
 
 
+def test_later_export_replaces_same_size_generation(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    draft = tmp_path / "draft.zip"
+    final = tmp_path / "final.zip"
+    uuid = "77777777-7777-7777-7777-777777777777"
+    write_archive(draft, uuid, ["initial draft"], session_key="stable-key")
+    write_archive(final, uuid, ["completed answer"], session_key="stable-key")
+    rewrite_manifest(final, lambda manifest: manifest.update(export_timestamp="2026-08-10T00:05:00Z"))
+    ingestor = Ingestor(data_dir)
+    try:
+        ingestor.ingest_zip("alice", draft)
+        ingestor.ingest_zip("alice", final)
+    finally:
+        ingestor.close()
+    corpus = Corpus(data_dir)
+    assert corpus.search('"completed answer"', person="alice")
+    assert corpus.search('"initial draft"', person="alice") == []
+
+
 def test_rejects_decompression_bomb_body(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     archive = tmp_path / "bomb.zip"
