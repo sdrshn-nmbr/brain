@@ -1,6 +1,6 @@
 [Unit]
 Description=Upload saved agent chats before the VM shuts down
-After=network-online.target tailscaled.service
+After=network.target network-online.target tailscaled.service
 Before=user@1000.service
 
 [Service]
