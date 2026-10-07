@@ -45,7 +45,11 @@ def main() -> None:
     args = parser.parse_args()
     try:
         operate(args.action, args.vm)
-    except (subprocess.CalledProcessError, RuntimeError) as error:
+    except subprocess.CalledProcessError as error:
+        raise SystemExit(
+            f"[brain-vm] FAILED {args.action} cancelled; VM retained (command exited {error.returncode})"
+        ) from None
+    except RuntimeError as error:
         raise SystemExit(f"[brain-vm] FAILED {args.action} cancelled; VM retained: {error}") from error
 
 
