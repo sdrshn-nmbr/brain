@@ -992,6 +992,7 @@ def _parse_full_session(jsonl_path: Path) -> common.FullSession | None:
     call_names: dict[str, str] = {}
     ended_at: str | None = None
     model: str | None = None
+    settings_only = True
 
     def add(role: str, timestamp: str | None, text: str, tool_name: str | None = None, raw: dict | None = None) -> None:
         entries.append(
@@ -1009,7 +1010,14 @@ def _parse_full_session(jsonl_path: Path) -> common.FullSession | None:
                 try:
                     obj = json.loads(line)
                 except json.JSONDecodeError:
+                    settings_only = False
                     continue
+
+                if obj.get("type") != "session_meta" and not (
+                    obj.get("type") == "event_msg"
+                    and (obj.get("payload") or {}).get("type") == "thread_settings_applied"
+                ):
+                    settings_only = False
 
                 if obj.get("type") == "turn_context":
                     if not model:
@@ -1054,7 +1062,7 @@ def _parse_full_session(jsonl_path: Path) -> common.FullSession | None:
     except (OSError, UnicodeDecodeError):
         return None
 
-    if not entries:
+    if not entries and not (settings_only and meta.get("id")):
         return None
 
     cwd = meta.get("cwd")

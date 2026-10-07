@@ -293,3 +293,52 @@ def test_every_folder_labels_sessions_outside_git_by_directory(monkeypatch) -> N
     assert parse_job(job).repository is None
     labelled = parse_job(job, every_folder=True).repository
     assert labelled is not None and labelled.slug == "local:/users/me/downloads"
+
+
+def test_settings_only_codex_session_survives_export_and_ingestion(tmp_path: Path, monkeypatch) -> None:
+    session_id = "00000000-0000-4000-8000-000000000001"
+    path = tmp_path / f"rollout-{session_id}.jsonl"
+    records = [
+        {"type": "session_meta", "payload": {"id": session_id, "cwd": str(tmp_path)}},
+        {"type": "event_msg", "payload": {"type": "thread_settings_applied", "model": "example-model"}},
+    ]
+    path.write_text("".join(json.dumps(record) + "\n" for record in records))
+    job = Job(source="codex", target=path, backend="jsonl")
+    monkeypatch.setattr(export_history, "discover_jobs", lambda *_args, **_kwargs: {"codex": [job]})
+    output = tmp_path / "export.zip"
+    args = Namespace(
+        source="codex",
+        exclude_subagents=False,
+        exclude_archived=False,
+        since=None,
+        until=None,
+        repository=[],
+        every_folder=True,
+        project=None,
+        output=str(output),
+        workers=1,
+    )
+    export_history.run_export(args, Console(file=io.StringIO(), force_terminal=False))
+    with ZipFile(output) as archive:
+        manifest = json.loads(
+            archive.read(next(name for name in archive.namelist() if name.endswith("_manifest.json")))
+        )
+        assert manifest["totals"]["codex"]["failed"] == 0
+        assert manifest["sessions"][0]["uuid"] == session_id
+        assert manifest["sessions"][0]["entry_count"] == 0
+    ingestor = Ingestor(tmp_path / "index")
+    try:
+        ingestor.ingest_zip("test-vm", output)
+        row = ingestor.conn.execute("SELECT uuid, entry_count FROM sessions").fetchone()
+        assert tuple(row) == (session_id, 0)
+    finally:
+        ingestor.close()
+
+
+@pytest.mark.parametrize("extra", ["not json\n", '{"type":"unknown-record"}\n'])
+def test_unreadable_codex_record_is_not_treated_as_settings_only(tmp_path: Path, extra: str) -> None:
+    path = tmp_path / "rollout-invalid.jsonl"
+    path.write_text(json.dumps({"type": "session_meta", "payload": {"id": "test-session"}}) + "\n" + extra)
+    outcome = parse_job(Job(source="codex", target=path, backend="jsonl"), every_folder=True)
+    assert outcome.session is None
+    assert outcome.error
