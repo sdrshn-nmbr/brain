@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+. "$HOME/.config/brain/sync.env"
+exec "$BRAIN_UVX" --refresh-package brain-mcp-server --from git+https://github.com/sdrshn-nmbr/brain brain-sync \
+  --endpoint "$BRAIN_ENDPOINT" --machine "$BRAIN_MACHINE" --final
