@@ -32,7 +32,7 @@ def operate(action: str, machine: str, run: Callable = subprocess.run) -> None:
         run([*command, "vm", "start", vm_id], check=True)
     print(f"[brain-vm] final upload from {machine}; {action} requires success", file=sys.stderr)
     run(
-        [*command, "vm", "exec", vm_id, "--timeout-ms", "900000", "--", "bash", "-lc", FINAL_SYNC, "brain-vm", action],
+        [*command, "vm", "exec", vm_id, "--timeout-ms", "300000", "--", "bash", "-lc", FINAL_SYNC, "brain-vm", action],
         check=True,
     )
     run([*command, "vm", action, vm_id], check=True)

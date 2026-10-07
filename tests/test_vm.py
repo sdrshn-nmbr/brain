@@ -22,6 +22,8 @@ class FreestyleProcess:
         if "start" in command:
             self.state = "running"
         elif "exec" in command:
+            if int(command[command.index("--timeout-ms") + 1]) > 300_000:
+                raise subprocess.CalledProcessError(1, command)
             if self.fail_sync:
                 raise subprocess.CalledProcessError(1, command)
             self.synced = True
