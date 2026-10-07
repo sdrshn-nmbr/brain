@@ -5,6 +5,7 @@ import json
 import zipfile
 from pathlib import Path
 
+import pytest
 import zstandard as zstd
 
 from collector import sync
@@ -218,3 +219,22 @@ def test_session_negotiation_batches_at_server_limit(tmp_path: Path) -> None:
     assert selected is None
     assert batches == [10_000, 1]
     assert profile["sessionsSkipped"] == 10_001
+
+
+def test_final_sync_rejects_failed_exports_without_advancing_checkpoint(tmp_path: Path, monkeypatch) -> None:
+    manifest = {"sessions": [], "totals": {"codex": {"failed": 1}}}
+
+    def export_process(command, *, check):
+        assert "--since" not in command
+        with zipfile.ZipFile(command[command.index("--output") + 1], "w") as archive:
+            archive.writestr("export/_manifest.json", json.dumps(manifest))
+
+    monkeypatch.setattr(sync, "STATE_DIR", tmp_path)
+    sync.write_machine_since("test-vm", "https://brain.example/mcp", 1000)
+    original = sync.machine_state_path("test-vm").read_bytes()
+    monkeypatch.setattr(sync.subprocess, "run", export_process)
+    monkeypatch.setattr(sync.sys, "argv", ["brain-sync", "--machine", "test-vm", "--final"])
+    with pytest.raises(RuntimeError, match="Final sync refused.*1"):
+        sync.main()
+    assert sync.machine_state_path("test-vm").read_bytes() == original
+    assert (tmp_path / "test-vm-upload.zip").exists()

@@ -1,0 +1,16 @@
+[Unit]
+Description=Upload saved agent chats before the VM shuts down
+After=network.target network-online.target tailscaled.service
+Before=user@1000.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=ubuntu
+ExecStart=/usr/bin/true
+ExecStop=/usr/local/bin/brain-final-sync
+TimeoutStopSec=900
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

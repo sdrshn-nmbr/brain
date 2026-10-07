@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import http.client
 import json
@@ -14,6 +15,7 @@ import urllib.error
 import urllib.request
 import zipfile
 from collections.abc import Callable
+from contextlib import ExitStack
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -395,6 +397,11 @@ def cleanup_delta(path: Path | None, used_original_archive: bool) -> None:
 
 
 def main() -> None:
+    with ExitStack() as resources:
+        sync(resources)
+
+
+def sync(resources: ExitStack) -> None:
     parser = argparse.ArgumentParser(description="Preview, confirm, and publish local agent transcripts to Brain")
     parser.add_argument("--endpoint", default=DEFAULT_ENDPOINT)
     parser.add_argument("--source", choices=("all", *SOURCES), default="all")
@@ -439,16 +446,35 @@ def main() -> None:
             "Only files changed since the last successful run are exported."
         ),
     )
+    parser.add_argument("--final", action="store_true", help="Rescan all machine history and refuse incomplete exports")
     args = parser.parse_args()
+    if args.final and (
+        not args.machine
+        or args.source != "all"
+        or args.since
+        or args.until
+        or args.project
+        or args.exclude_subagents
+        or args.exclude_archived
+        or args.no_wait
+        or args.dry_run
+    ):
+        parser.error("--final requires --machine and a complete, unfiltered, synchronous upload")
 
-    started = time.time()
     if args.machine:
+        if not args.machine.isascii() or not all(c.islower() or c.isdigit() or c == "-" for c in args.machine):
+            parser.error("--machine must contain lowercase letters, digits or hyphens")
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        lock = resources.enter_context((STATE_DIR / f"{args.machine}.lock").open("a"))
+        fcntl.flock(lock, fcntl.LOCK_EX)
         if args.repository or args.archive:
             parser.error("--machine publishes every folder; drop --repository and --archive")
         args.yes = True
         args.visibility = "personal"
-        args.since = args.since or read_machine_since(args.machine, args.endpoint)
+        if not args.final:
+            args.since = args.since or read_machine_since(args.machine, args.endpoint)
         args.output = args.output or STATE_DIR / f"{args.machine}-upload.zip"
+    started = time.time()
     if not args.archive and not args.repository and not args.machine:
         parser.error("at least one --repository is required when building an archive")
 
@@ -464,6 +490,10 @@ def main() -> None:
         output.parent.mkdir(parents=True, exist_ok=True)
         run_export(args, output)
     manifest = read_manifest(output)
+    if args.final:
+        failed = sum(int(total.get("failed", 0)) for total in (manifest.get("totals") or {}).values())
+        if failed:
+            raise RuntimeError(f"Final sync refused: {failed} transcript exports failed; local archive preserved")
     scope = scope_from_manifest(manifest, args.visibility)
     if args.machine:
         scope["machine"] = args.machine
