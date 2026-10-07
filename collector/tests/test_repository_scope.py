@@ -303,7 +303,7 @@ def test_settings_only_codex_session_survives_export_and_ingestion(tmp_path: Pat
         {"type": "event_msg", "payload": {"type": "thread_settings_applied", "model": "example-model"}},
     ]
     path.write_text("".join(json.dumps(record) + "\n" for record in records))
-    job = Job(source="codex", target=path, backend="rollout")
+    job = Job(source="codex", target=path, backend="jsonl")
     monkeypatch.setattr(export_history, "discover_jobs", lambda *_args, **_kwargs: {"codex": [job]})
     output = tmp_path / "export.zip"
     args = Namespace(
@@ -339,6 +339,6 @@ def test_settings_only_codex_session_survives_export_and_ingestion(tmp_path: Pat
 def test_unreadable_codex_record_is_not_treated_as_settings_only(tmp_path: Path, extra: str) -> None:
     path = tmp_path / "rollout-invalid.jsonl"
     path.write_text(json.dumps({"type": "session_meta", "payload": {"id": "test-session"}}) + "\n" + extra)
-    outcome = parse_job(Job(source="codex", target=path, backend="rollout"), every_folder=True)
+    outcome = parse_job(Job(source="codex", target=path, backend="jsonl"), every_folder=True)
     assert outcome.session is None
     assert outcome.error
