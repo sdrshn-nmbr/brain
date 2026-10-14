@@ -257,6 +257,19 @@ def _proxy(child: subprocess.Popen[bytes], recorder: SideChatRecorder) -> None:
     selector.close()
 
 
+def _real_codex() -> str | None:
+    configured = os.environ.get("CODEX_SIDECHAT_REAL_CLI")
+    if configured:
+        return configured
+    # On Linux this file is also linked as ~/.local/bin/codex, which Codex's remote SSH launch puts first on PATH.
+    own = {os.path.realpath(sys.argv[0]), os.path.realpath(__file__)}
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        candidate = os.path.join(directory or ".", "codex")
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK) and os.path.realpath(candidate) not in own:
+            return candidate
+    return DEFAULT_CODEX if os.path.exists(DEFAULT_CODEX) else None
+
+
 def install_hook(target: Path | None = None) -> Path:
     destination = target or Path.home() / ".codex" / "bin" / "brain-sidechat-recorder"
     destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -276,11 +289,16 @@ def main() -> int:
         print(f'export CODEX_CLI_PATH="{destination}"')
         return 0
 
-    real_codex = os.environ.get("CODEX_SIDECHAT_REAL_CLI", DEFAULT_CODEX)
+    real_codex = _real_codex()
+    if real_codex is None:
+        print("side-chat recorder found no real codex on PATH", file=sys.stderr)
+        return 127
     if os.path.realpath(real_codex) == os.path.realpath(sys.argv[0]):
         print("side-chat recorder points to itself", file=sys.stderr)
         return 126
-    if "app-server" not in arguments or os.environ.get("CODEX_SIDECHAT_DISABLE") == "1":
+    # Only a stdio app-server carries the Desktop's JSON-RPC; the --listen daemon talks over its socket.
+    stdio_app_server = "app-server" in arguments and not any(a.startswith("--listen") for a in arguments)
+    if not stdio_app_server or os.environ.get("CODEX_SIDECHAT_DISABLE") == "1":
         os.execv(real_codex, [real_codex, *arguments])
 
     child_environment = os.environ.copy()

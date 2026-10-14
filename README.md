@@ -89,6 +89,17 @@ library code. Recording failure never blocks Codex. These files can contain sens
 recorded side chat only when its saved working directory resolves to an allowed repository and the user confirms the
 archive. Arbitrary files from `~/.codex/attachments` are never uploaded.
 
+On a remote Linux host that Codex Desktop reaches over SSH, the Desktop runs `codex app-server proxy` with
+`~/.local/bin` first on `PATH`. Link the recorder there instead. It finds the real `codex` further down `PATH`
+and passes every other command, including the `app-server --listen` daemon, straight through:
+
+```bash
+uvx --from git+https://github.com/sdrshn-nmbr/brain brain-sidechat-recorder --install-hook
+ln -sfn "$HOME/.codex/bin/brain-sidechat-recorder" "$HOME/.local/bin/codex"
+```
+
+Recording starts with the next Desktop connection. Set `CODEX_SIDECHAT_DISABLE=1` or remove the link to turn it off.
+
 ## Scope and access
 
 Scope is checked by the exporter, upload server, and ingester. Repository IDs include the Git host, such as
