@@ -23,7 +23,7 @@ def fake_codex(path: Path) -> Path:
             import json
             import sys
 
-            if "app-server" not in sys.argv[1:]:
+            if "app-server" not in sys.argv[1:] or "--listen" in sys.argv[1:]:
                 print("codex-cli test")
                 raise SystemExit(0)
 
@@ -121,6 +121,45 @@ def test_non_app_server_calls_exec_real_cli(tmp_path: Path) -> None:
     completed = subprocess.run(
         [str(recorder), "--version"],
         env={**os.environ, "CODEX_SIDECHAT_REAL_CLI": str(real_codex)},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert completed.stdout.strip() == "codex-cli test"
+
+
+def test_listen_daemon_execs_real_cli_without_recording(tmp_path: Path) -> None:
+    recorder = install_hook(tmp_path / "brain-sidechat-recorder")
+    real_codex = fake_codex(tmp_path / "fake-codex")
+    records = tmp_path / "records"
+    completed = subprocess.run(
+        [str(recorder), "app-server", "--listen", "unix://"],
+        env={
+            **os.environ,
+            "CODEX_SIDECHAT_REAL_CLI": str(real_codex),
+            "CODEX_SIDECHAT_RECORD_DIR": str(records),
+        },
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert completed.stdout.strip() == "codex-cli test"
+    assert not records.exists()
+
+
+def test_linked_as_codex_finds_real_cli_on_path(tmp_path: Path) -> None:
+    recorder = install_hook(tmp_path / "brain-sidechat-recorder")
+    shim_dir = tmp_path / "shim"
+    real_dir = tmp_path / "real"
+    shim_dir.mkdir()
+    real_dir.mkdir()
+    (shim_dir / "codex").symlink_to(recorder)
+    fake_codex(real_dir / "codex")
+    environment = {key: value for key, value in os.environ.items() if key != "CODEX_SIDECHAT_REAL_CLI"}
+    environment["PATH"] = os.pathsep.join([str(shim_dir), str(real_dir), environment.get("PATH", "")])
+    completed = subprocess.run(
+        [str(shim_dir / "codex"), "--version"],
+        env=environment,
         capture_output=True,
         text=True,
         check=True,
