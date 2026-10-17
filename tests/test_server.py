@@ -396,3 +396,70 @@ async def test_cancelled_mcp_search_interrupts_worker(
         await invocation
     assert await asyncio.to_thread(interrupted.wait, 1)
     request_log.close()
+
+
+async def test_personal_plan_upload_checks_the_machine_label(tmp_path: Path) -> None:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    config = replace(
+        server_config(tmp_path, port),
+        mode="personal",
+        allowed_repositories=None,
+        visibility="personal",
+        ingest_script=None,
+    )
+    server = uvicorn.Server(uvicorn.Config(create_app(config), host="127.0.0.1", port=port, log_level="warning"))
+    task = asyncio.create_task(server.serve())
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            await asyncio.sleep(0.01)
+        assert server.started
+        async with httpx2.AsyncClient(headers={"Authorization": "Bearer append-token"}) as http_client:
+            transport = streamable_http_client(f"http://127.0.0.1:{port}/mcp", http_client=http_client)
+            async with Client(transport) as client:
+                archive = tmp_path / "machine.zip"
+                _session_uuid, _term, scope = build_smoke_archive(archive, "github.com/acme/widget", "personal")
+                with zipfile.ZipFile(archive) as zipped:
+                    manifest = json.loads(zipped.read("brain-smoke/_manifest.json"))
+                fingerprint = manifest["sessions"][0]["session_fingerprint"]
+                prepared = await client.call_tool(
+                    "prepare_upload",
+                    {
+                        "archiveSha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+                        "archiveBytes": archive.stat().st_size,
+                        "scope": scope | {"machine": "mac"},
+                        "confirmedShared": True,
+                    },
+                )
+                upload = prepared.structured_content["result"]
+                response = await http_client.put(
+                    f"http://127.0.0.1:{port}{upload['uploadPath']}", content=archive.read_bytes()
+                )
+                assert response.status_code == 200
+                record = (await client.call_tool("commit_upload", {"uploadId": upload["id"]})).structured_content[
+                    "result"
+                ]
+                for _ in range(100):
+                    if record["status"] not in {"queued", "processing"}:
+                        break
+                    await asyncio.sleep(0.02)
+                    status = await client.call_tool("upload_status", {"uploadId": upload["id"]})
+                    record = status.structured_content["result"]
+                assert record["status"] == "complete", record
+
+                same_machine = await client.call_tool(
+                    "plan_upload", {"sessionFingerprints": [fingerprint], "machine": "mac"}
+                )
+                assert same_machine.structured_content["result"]["missingSessionFingerprints"] == []
+                other_machine = await client.call_tool(
+                    "plan_upload", {"sessionFingerprints": [fingerprint], "machine": "devbox"}
+                )
+                assert other_machine.structured_content["result"]["missingSessionFingerprints"] == [fingerprint]
+                unlabeled = await client.call_tool("plan_upload", {"sessionFingerprints": [fingerprint]})
+                assert unlabeled.is_error is True
+    finally:
+        server.should_exit = True
+        await task
