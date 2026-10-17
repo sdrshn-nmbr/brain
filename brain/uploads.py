@@ -23,7 +23,7 @@ from collector.archive import stable_session_key
 
 logger = logging.getLogger("brain")
 
-ALLOWED_SOURCES = {"claude", "codex", "cursor"}
+ALLOWED_SOURCES = {"claude", "codex", "cursor", "amp"}
 IngestArchive = Callable[[str, Path, str], Awaitable[dict[str, int]]]
 
 

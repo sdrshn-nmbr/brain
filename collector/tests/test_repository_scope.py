@@ -164,7 +164,7 @@ def test_codex_desktop_side_chat_uses_past_full_session_parser(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     record = {"session_id": "side-chat-id", "cwd": "/workspace/widget"}
-    parsed = SimpleNamespace(cwd="/workspace/widget")
+    parsed = SimpleNamespace(cwd="/workspace/widget", repository_url=None)
     monkeypatch.setattr(
         export_history.codex_source,
         "parse_side_chat_export_target",
@@ -185,7 +185,7 @@ def test_codex_desktop_side_chat_supports_original_past_adapter(
         "cwd": "/workspace/widget",
         "last_timestamp": 200.0,
     }
-    parsed = SimpleNamespace(cwd="/workspace/widget")
+    parsed = SimpleNamespace(cwd="/workspace/widget", repository_url=None)
     monkeypatch.setattr(export_history.codex_source, "store_exists", lambda: True)
     monkeypatch.setattr(
         export_history.codex_source,
@@ -285,7 +285,7 @@ def test_ingestor_keeps_wal_artifacts_online(tmp_path: Path) -> None:
 
 
 def test_every_folder_labels_sessions_outside_git_by_directory(monkeypatch) -> None:
-    parsed = SimpleNamespace(cwd="/Users/Me/Downloads")
+    parsed = SimpleNamespace(cwd="/Users/Me/Downloads", repository_url=None)
     monkeypatch.setattr(export_history.codex_source, "parse_export_target", lambda _target: parsed)
     monkeypatch.setattr(export_history, "resolve_repository", lambda _cwd: None)
     job = Job("codex", Path("/tmp/session.jsonl"), "jsonl")

@@ -2,8 +2,9 @@
 
 Brain has four boundaries:
 
-1. The collector parses local Claude Code, Codex, and Cursor stores. It resolves repository identity from each session's
-   saved working directory and Git `origin`.
+1. The collector parses local Claude Code, Codex, and Cursor stores, and Amp threads through the signed-in `amp` CLI.
+   It resolves repository identity from each session's saved working directory and Git `origin`, or from the Git
+   remote recorded on an Amp thread.
 2. The sync client shows the exact scope, gets confirmation, asks the server which session and body hashes are missing,
    and uploads only the needed archive data.
 3. The ingester validates the archive, writes compressed bodies to an append-only content-addressed object database, and

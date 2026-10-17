@@ -55,14 +55,16 @@ from collector.archive import (
 from collector.export.repository_scope import (
     RepositoryIdentity,
     normalize_repository_selector,
+    normalize_repository_slug,
     resolve_repository,
 )
-from collector.sources import claude_source, codex_source, common, cursor_source
+from collector.sources import amp_source, claude_source, codex_source, common, cursor_source
 
 DOWNLOADS_DIR = Path.home() / "Downloads"
 DEFAULT_WORKERS = 8
 PARSE_BATCH_SIZE = 128
-SOURCE_NAMES = ("claude", "codex", "cursor")
+LOCAL_SOURCE_NAMES = ("claude", "codex", "cursor")
+SOURCE_NAMES = (*LOCAL_SOURCE_NAMES, "amp")
 
 
 @dataclass
@@ -144,6 +146,11 @@ def discover_jobs(sources: set[str], *, include_subagents: bool, include_archive
             for t in cursor_source.discover_export_targets(include_subagents=include_subagents)
         ]
 
+    if "amp" in sources and amp_source.store_exists():
+        jobs["amp"] = [
+            Job(source="amp", target=thread, backend="cli") for thread in amp_source.discover_export_targets()
+        ]
+
     return jobs
 
 
@@ -151,8 +158,15 @@ def local_repository(cwd: str | None) -> RepositoryIdentity:
     return RepositoryIdentity(slug=f"local:{(cwd or 'unscoped').lower()}", root=cwd or "", remote_url="")
 
 
+def session_repository(session: common.FullSession) -> RepositoryIdentity | None:
+    slug = normalize_repository_slug(session.repository_url or "")
+    if slug:
+        return RepositoryIdentity(slug=slug, root=session.cwd or "", remote_url=session.repository_url or "")
+    return resolve_repository(session.cwd)
+
+
 def parse_job(job: Job, every_folder: bool = False) -> Outcome:
-    module = {"claude": claude_source, "codex": codex_source, "cursor": cursor_source}[job.source]
+    module = {"claude": claude_source, "codex": codex_source, "cursor": cursor_source, "amp": amp_source}[job.source]
     try:
         if job.source == "codex" and job.backend == "desktop-side-chat":
             parse_side_chat = (
@@ -169,7 +183,7 @@ def parse_job(job: Job, every_folder: bool = False) -> Outcome:
             session=None,
             error="parser returned no session (empty or unparseable file)",
         )
-    repository = resolve_repository(session.cwd)
+    repository = session_repository(session)
     if repository is None and every_folder:
         repository = local_repository(session.cwd)
     return Outcome(job=job, session=session, repository=repository)
@@ -207,6 +221,8 @@ def passes_filters(
 def target_identifier(job: Job) -> str:
     if job.source == "codex" and job.backend == "desktop-side-chat":
         return f"sidechat:{job.target['session_id']}"
+    if job.source == "amp":
+        return job.target["id"]
     if job.source == "cursor":
         uuid, backend, path = job.target
         return f"{uuid} ({backend}: {path})"
@@ -216,6 +232,8 @@ def target_identifier(job: Job) -> str:
 def target_mtime(job: Job) -> float | None:
     if job.source == "codex" and job.backend == "desktop-side-chat":
         return job.target.get("last_timestamp") or job.target.get("first_timestamp")
+    if job.source == "amp":
+        return common.parse_sort_ts(job.target.get("updated")) or None
     if job.source == "cursor":
         _uuid, backend, path = job.target
         if backend == "statedb":
@@ -263,7 +281,7 @@ def build_progress() -> Progress:
 
 
 def run_export(args: argparse.Namespace, console: Console) -> None:
-    sources = set(SOURCE_NAMES) if args.source == "all" else {args.source}
+    sources = set(LOCAL_SOURCE_NAMES) if args.source == "all" else {args.source}
     include_subagents = not args.exclude_subagents
     include_archived = not args.exclude_archived
     since_ts = _parse_time_bound(args.since)
@@ -443,7 +461,7 @@ def run_export(args: argparse.Namespace, console: Console) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Export full Claude Code / Codex CLI / Cursor conversation history into a zstd NDJSON and CAS archive."
+            "Export full Claude Code / Codex / Cursor / Amp conversation history into a zstd NDJSON and CAS archive."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -451,7 +469,7 @@ def main() -> None:
         "--source",
         choices=("all", *SOURCE_NAMES),
         default="all",
-        help="Only export one surface (default: all)",
+        help="Only export one surface (default: all local stores; Amp threads export only with --source amp)",
     )
     parser.add_argument("--project", help="Only export sessions whose cwd contains this substring")
     parser.add_argument(

@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from collector.archive import iter_session_hashes, object_member
 
 DEFAULT_ENDPOINT = os.environ.get("BRAIN_MCP_URL", "http://127.0.0.1:8788/mcp")
-SOURCES = ("claude", "codex", "cursor")
+SOURCES = ("claude", "codex", "cursor", "amp")
 STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "brain"
 RESCAN_MARGIN_SECONDS = 600
 

@@ -2,7 +2,7 @@
 
 Your team already wrote the missing manual. It is sitting in agent chats.
 
-Brain turns Claude Code, Codex, and Cursor sessions into a shared, searchable memory. A new teammate can ask why a
+Brain turns Claude Code, Codex, Cursor, and Amp sessions into a shared, searchable memory. A new teammate can ask why a
 system works this way. An agent can find the old investigation instead of repeating it. The useful context can span the
 whole history of a Git organization, including decisions that never made it into a document.
 
@@ -17,8 +17,10 @@ Brain is open source and cloud-neutral. AWS, another cloud, or one machine all w
 - Tailscale is the default front door. People use the identity they already have on the private network.
 - Search and reading are remote, stateless MCP calls. There is nothing to install on each reader's machine.
 - Sharing stays deliberate. The local exporter shows the repository, source, dates, and session count before upload.
-- Repository scope comes from the saved session directory's Git `origin`, not its folder name.
-- Claude Code, Codex, Cursor, subagents, archived Codex sessions, and recorded Codex Desktop side chats are supported.
+- Repository scope comes from the saved session directory's Git `origin`, not its folder name. Amp threads carry their
+  own Git remote, so threads from orbs keep their repository.
+- Claude Code, Codex, Cursor, Amp, subagents, archived Codex sessions, and recorded Codex Desktop side chats are
+  supported.
 - Repeated text is stored once with SHA-256 content-addressed storage. Uploads send only missing sessions and bodies.
 - Admins can audit bounded request records, including the first 2,000 characters of each search. Upload bodies and
   responses are never stored.
