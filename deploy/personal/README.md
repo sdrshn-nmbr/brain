@@ -46,6 +46,16 @@ uvx --from git+https://github.com/sdrshn-nmbr/brain brain-sync --endpoint https:
 Run it from a systemd user timer on Linux (`brain-sync.service`, `brain-sync.timer`) or a LaunchAgent on macOS
 (`brain-sync.plist`). Edit the endpoint and label in each, then enable it.
 
+Amp keeps threads on ampcode.com, including threads that ran in orbs, so one machine signed in to the `amp` CLI
+publishes all of them under their own label. The default `all` source covers only local stores, which keeps a second
+machine from uploading the same threads again:
+
+```bash
+uvx --from git+https://github.com/sdrshn-nmbr/brain brain-sync --endpoint https://<host>.<tailnet>.ts.net/mcp --source amp --machine amp
+```
+
+On macOS, `brain-sync-amp.plist` runs it every five minutes.
+
 For a final upload on Linux shutdown, copy `sync.env` to `~/.config/brain/sync.env` and set the uvx path, endpoint
 and machine label. Install `brain-final-sync` at `/usr/local/bin/brain-final-sync` and `brain-sync-shutdown.service`
 in `/etc/systemd/system/`. Set its `User` and `Before=user@<uid>.service` to this machine's user, then run

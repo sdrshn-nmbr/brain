@@ -40,7 +40,7 @@ from collector.ingest.ingest import init_db, init_objects_db
 
 logger = logging.getLogger("brain")
 
-Source = Literal["claude", "codex", "cursor"]
+Source = Literal["claude", "codex", "cursor", "amp"]
 BROWSER_REDIRECT_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)

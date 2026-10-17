@@ -107,6 +107,7 @@ class FullSession:
     started_at: str | None = None
     ended_at: str | None = None
     entries: list[FullEntry] = field(default_factory=list)
+    repository_url: str | None = None
 
 
 @dataclass
