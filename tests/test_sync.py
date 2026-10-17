@@ -208,16 +208,19 @@ def test_session_negotiation_batches_at_server_limit(tmp_path: Path) -> None:
         "object_count": 0,
     }
     batches: list[int] = []
+    machines: set[str | None] = set()
 
     def fake_call(name: str, arguments: dict) -> dict:
         assert name == "plan_upload"
         batches.append(len(arguments["sessionFingerprints"]))
+        machines.add(arguments.get("machine"))
         return {"missingSessionFingerprints": [], "presentSessionCount": len(arguments["sessionFingerprints"])}
 
-    selected, profile = sync.plan_delta("https://brain.example/mcp", source, manifest, call=fake_call)
+    selected, profile = sync.plan_delta("https://brain.example/mcp", source, manifest, call=fake_call, machine="mac")
 
     assert selected is None
     assert batches == [10_000, 1]
+    assert machines == {"mac"}
     assert profile["sessionsSkipped"] == 10_001
 
 

@@ -10,7 +10,7 @@ import time
 import uuid
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 import uvicorn
@@ -542,17 +542,25 @@ def create_server(config: Config, corpus: CorpusStore, uploads: UploadManager, r
 
     @mcp.tool(
         title="Plan an incremental Brain upload",
-        description="Return only session fingerprints not already present for the authenticated user.",
+        description=(
+            "Return only session fingerprints not already stored for this upload's owner: the machine label on a "
+            "personal Brain, or the authenticated user on a team Brain."
+        ),
         annotations=READ_ONLY,
         structured_output=True,
     )
-    def plan_upload(sessionFingerprints: list[str], ctx: Context) -> dict[str, Any]:
+    def plan_upload(
+        sessionFingerprints: list[str],
+        ctx: Context,
+        machine: Annotated[str | None, Field(pattern=r"^[a-z0-9][a-z0-9-]{0,31}$")] = None,
+    ) -> dict[str, Any]:
         if len(sessionFingerprints) > 10_000 or any(
             not re.fullmatch(r"[a-f0-9]{64}", value) for value in sessionFingerprints
         ):
             raise ValueError("sessionFingerprints must contain at most 10000 lowercase SHA-256 digests")
         owner = append_login_from_context(ctx, config)
-        missing = corpus.read().missing_session_fingerprints(uploads.person_for(owner), sessionFingerprints)
+        person = uploads.upload_person(owner, machine)
+        missing = corpus.read().missing_session_fingerprints(person, sessionFingerprints)
         return {
             "result": {
                 "missingSessionFingerprints": missing,

@@ -180,6 +180,13 @@ class UploadManager:
             self.db.commit()
             return person
 
+    def upload_person(self, owner_principal: str, machine: str | None) -> str:
+        if self.allowed_repositories is None and not machine:
+            raise ValueError("A personal Brain labels sessions by machine; scope.machine is required")
+        if self.allowed_repositories is not None and machine:
+            raise ValueError("scope.machine is only accepted by a personal Brain")
+        return machine or self.person_for(owner_principal)
+
     def start(self) -> None:
         self._schedule_drain()
 
@@ -209,11 +216,7 @@ class UploadManager:
             raise ValueError("scope.repositories contains a repository outside the Brain allowlist")
         if not sources or any(source not in ALLOWED_SOURCES for source in sources):
             raise ValueError("scope.sources contains an unsupported agent source")
-        machine = scope.get("machine")
-        if self.allowed_repositories is None and not machine:
-            raise ValueError("A personal Brain labels sessions by machine; scope.machine is required")
-        if self.allowed_repositories is not None and machine:
-            raise ValueError("scope.machine is only accepted by a personal Brain")
+        person = self.upload_person(owner_principal, scope.get("machine"))
 
         self.garbage_collect()
         with self._db_lock:
@@ -259,7 +262,7 @@ class UploadManager:
                 (
                     upload_id,
                     owner_principal,
-                    machine or self.person_for(owner_principal),
+                    person,
                     archive_sha256,
                     archive_bytes,
                     str(archive_path),

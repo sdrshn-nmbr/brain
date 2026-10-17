@@ -326,6 +326,7 @@ def plan_delta(
     archive: Path,
     manifest: dict,
     call: Callable[[str, dict], dict] | None = None,
+    machine: str | None = None,
 ) -> tuple[Path | None, dict]:
     invoke = call or (lambda name, arguments: mcp_call(endpoint, name, arguments))
     sessions = manifest.get("sessions") or []
@@ -335,7 +336,8 @@ def plan_delta(
     started = time.perf_counter()
     missing_sessions: set[str] = set()
     for offset in range(0, len(fingerprints), 10_000):
-        plan = invoke("plan_upload", {"sessionFingerprints": fingerprints[offset : offset + 10_000]})
+        arguments = {"sessionFingerprints": fingerprints[offset : offset + 10_000]}
+        plan = invoke("plan_upload", arguments | ({"machine": machine} if machine else {}))
         missing_sessions.update(plan["missingSessionFingerprints"])
     plan_ms = (time.perf_counter() - started) * 1_000
     if not missing_sessions:
@@ -528,7 +530,7 @@ def sync(resources: ExitStack) -> None:
                 f"The archive visibility {scope['visibility']} does not match "
                 f"server visibility {access.get('visibility')}"
             )
-        delta_path, profile = plan_delta(args.endpoint, output, manifest, call=client.call)
+        delta_path, profile = plan_delta(args.endpoint, output, manifest, call=client.call, machine=args.machine)
         print(
             "Incremental plan: "
             f"sessions-skipped={profile['sessionsSkipped']} "
