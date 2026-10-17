@@ -104,11 +104,9 @@ def thread_entries(messages: list[dict]) -> list[common.FullEntry]:
                 add("user", f"[image] {block['sourcePath']}", timestamp)
             elif kind == "summary":
                 summary = block.get("summary")
-                add(
-                    "assistant",
-                    summary if isinstance(summary, str) else json.dumps(summary, ensure_ascii=False),
-                    timestamp,
-                )
+                if isinstance(summary, dict):
+                    summary = summary.get("summary")
+                add("assistant", summary if isinstance(summary, str) else None, timestamp)
     return entries
 
 
