@@ -47,6 +47,7 @@ ORB_THREAD: dict[str, Any] = {
             "content": [{"type": "tool_result", "toolUseID": "tool-1", "run": {"status": "done", "result": "found"}}],
         },
         {"role": "assistant", "createdAt": "2026-10-14T22:35:00Z", "content": [{"type": "text", "text": "fixed"}]},
+        {"role": "info", "content": [{"type": "summary", "summary": {"type": "message", "summary": "routing fixed"}}]},
     ],
 }
 
@@ -114,6 +115,7 @@ def test_orb_thread_exports_under_its_git_remote(tmp_path: Path, monkeypatch: py
     assert [(entry.role, entry.tool_name, entry.text) for entry in entries if entry.role == "tool_result"] == [
         ("tool_result", "Bash", "found")
     ]
+    assert entries[-1].text == "routing fixed"
 
 
 def test_all_sources_means_local_stores_without_amp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
