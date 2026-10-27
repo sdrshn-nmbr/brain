@@ -27,6 +27,8 @@ DEFAULT_ENDPOINT = os.environ.get("BRAIN_MCP_URL", "http://127.0.0.1:8788/mcp")
 SOURCES = ("claude", "codex", "cursor", "amp")
 STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "brain"
 RESCAN_MARGIN_SECONDS = 600
+# 10,000 64-character hashes serialize to about 0.7 MB, under the server's 1 MiB MCP request limit.
+PLAN_BATCH_SIZE = 10_000
 
 
 def request_headers() -> dict[str, str]:
@@ -335,8 +337,8 @@ def plan_delta(
         raise ValueError("archive does not contain v2 session fingerprints")
     started = time.perf_counter()
     missing_sessions: set[str] = set()
-    for offset in range(0, len(fingerprints), 10_000):
-        arguments = {"sessionFingerprints": fingerprints[offset : offset + 10_000]}
+    for offset in range(0, len(fingerprints), PLAN_BATCH_SIZE):
+        arguments = {"sessionFingerprints": fingerprints[offset : offset + PLAN_BATCH_SIZE]}
         plan = invoke("plan_upload", arguments | ({"machine": machine} if machine else {}))
         missing_sessions.update(plan["missingSessionFingerprints"])
     plan_ms = (time.perf_counter() - started) * 1_000
@@ -355,8 +357,8 @@ def plan_delta(
         hashes = sorted(set(iter_session_hashes(zipped, selected)))
     missing_blobs: set[str] = set()
     blob_plan_started = time.perf_counter()
-    for offset in range(0, len(hashes), 50_000):
-        result = invoke("missing_blobs", {"blobHashes": hashes[offset : offset + 50_000]})
+    for offset in range(0, len(hashes), PLAN_BATCH_SIZE):
+        result = invoke("missing_blobs", {"blobHashes": hashes[offset : offset + PLAN_BATCH_SIZE]})
         missing_blobs.update(result["missingBlobHashes"])
     blob_plan_ms = (time.perf_counter() - blob_plan_started) * 1_000
     with zipfile.ZipFile(archive) as zipped:
