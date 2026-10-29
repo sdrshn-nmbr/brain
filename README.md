@@ -154,10 +154,16 @@ small static embedding model, `minishlab/potion-retrieval-32M` by default, runs 
 machine. New messages are embedded after each upload. Changing `BRAIN_EMBEDDING_MODEL` rebuilds the vectors on the next
 start; `none` turns semantic search off.
 
-A personal Brain also learns from use. It records each search and treats a session read within 30 minutes of being
-returned as a useful result. Sessions that keep proving useful rank higher. Those same searches form an evaluation set:
-`brain-eval` replays them against the current ranking and reports recall and MRR, so a ranking or model change can be
-measured before it is kept. A team Brain records neither queries nor reads.
+A personal Brain also learns from use. It records each search, and a read credits the most recent search within 15
+minutes that returned that session. Sessions that keep proving useful rank higher. A team Brain records neither queries
+nor reads.
+
+`brain-eval` measures a ranking or model change before it is kept. It replays logged searches that led to a read, using
+only the usage learned before each search, and builds known-item queries from sampled sessions: three uncommon words
+from one message, and a session's three most characteristic words drawn from different messages. It reports recall@10,
+MRR, empty results, timeouts, the share of results that are review copies or generated sessions, and latency. Query
+generation stays on the server, so no conversation text leaves the machine. `--relabel` rebuilds the read credits from
+the request log; `--usage-dir` points it at a copy first.
 
 ## Develop
 
