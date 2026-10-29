@@ -1001,6 +1001,42 @@ def _parse_full_session(jsonl_path: Path) -> common.FullSession | None:
             )
         )
 
+    def consume(payload: dict, ts: str | None) -> None:
+        nonlocal ended_at
+        ptype = payload.get("type")
+        if ts:
+            ended_at = ts
+
+        if ptype == "message":
+            role = payload.get("role") or "unknown"
+            text = _extract_text_parts(payload.get("content"))
+            if text:
+                add(role, ts, text, raw=payload)
+        elif ptype == "reasoning":
+            text = _extract_reasoning_text(payload)
+            if text:
+                add("reasoning", ts, text, raw=payload)
+        elif ptype in ("function_call", "custom_tool_call", "tool_search_call", "web_search_call"):
+            name = payload.get("name") or ptype
+            call_id = payload.get("call_id") or payload.get("id")
+            if call_id:
+                call_names[call_id] = name
+            text = payload.get("arguments")
+            if text is None:
+                text = json.dumps(
+                    payload.get("input") or payload.get("action") or {}, indent=2, ensure_ascii=False
+                )
+            add("tool_call", ts, str(text), tool_name=name, raw=payload)
+        elif ptype in ("function_call_output", "custom_tool_call_output", "tool_search_output"):
+            call_id = payload.get("call_id")
+            name = call_names.get(call_id)
+            text = payload.get("output")
+            if text is None:
+                text = json.dumps(payload.get("tools") or {}, indent=2, ensure_ascii=False)
+            add("tool_result", ts, str(text), tool_name=name, raw=payload)
+        if payload.get("type") == "compaction":
+            add("compaction", ts, json.dumps(payload, ensure_ascii=False), raw=payload)
+
     try:
         with open(jsonl_path, encoding="utf-8") as f:
             for line in f:
@@ -1024,41 +1060,20 @@ def _parse_full_session(jsonl_path: Path) -> common.FullSession | None:
                         model = (obj.get("payload") or {}).get("model")
                     continue
 
+                if obj.get("type") == "compacted" and not entries:
+                    compacted = obj.get("payload") or {}
+                    for item in compacted.get("replacement_history") or []:
+                        if isinstance(item, dict):
+                            consume(item, obj.get("timestamp"))
+                    if not entries and compacted.get("message"):
+                        add("summary", obj.get("timestamp"), str(compacted["message"]), raw=compacted)
+                    continue
+
                 parsed = _as_payload(obj)
                 if parsed is None:
                     continue
                 payload, ts = parsed
-                ptype = payload.get("type")
-                if ts:
-                    ended_at = ts
-
-                if ptype == "message":
-                    role = payload.get("role") or "unknown"
-                    text = _extract_text_parts(payload.get("content"))
-                    if text:
-                        add(role, ts, text, raw=payload)
-                elif ptype == "reasoning":
-                    text = _extract_reasoning_text(payload)
-                    if text:
-                        add("reasoning", ts, text, raw=payload)
-                elif ptype in ("function_call", "custom_tool_call", "tool_search_call", "web_search_call"):
-                    name = payload.get("name") or ptype
-                    call_id = payload.get("call_id") or payload.get("id")
-                    if call_id:
-                        call_names[call_id] = name
-                    text = payload.get("arguments")
-                    if text is None:
-                        text = json.dumps(
-                            payload.get("input") or payload.get("action") or {}, indent=2, ensure_ascii=False
-                        )
-                    add("tool_call", ts, str(text), tool_name=name, raw=payload)
-                elif ptype in ("function_call_output", "custom_tool_call_output", "tool_search_output"):
-                    call_id = payload.get("call_id")
-                    name = call_names.get(call_id)
-                    text = payload.get("output")
-                    if text is None:
-                        text = json.dumps(payload.get("tools") or {}, indent=2, ensure_ascii=False)
-                    add("tool_result", ts, str(text), tool_name=name, raw=payload)
+                consume(payload, ts)
     except (OSError, UnicodeDecodeError):
         return None
 
