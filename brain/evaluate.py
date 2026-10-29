@@ -96,7 +96,7 @@ def known_items(corpus: Corpus, provenance: Provenance, count: int, seed: int) -
                 continue
             filters = (
                 {"repository": repository}
-                if repository and repository.startswith("github.com/") and position % 2 == 0
+                if repository and not repository.startswith("local:") and position % 2 == 0
                 else {}
             )
             blob_id = rng.choice(list(texts))
