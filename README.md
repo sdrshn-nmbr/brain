@@ -165,6 +165,11 @@ MRR, empty results, timeouts, the share of results that are review copies or gen
 generation stays on the server, so no conversation text leaves the machine. `--relabel` rebuilds the read credits from
 the request log; `--usage-dir` points it at a copy first.
 
+`--judge-model MODEL` also grades the top results of sampled logged queries with a model at `OPENAI_BASE_URL`, which
+sends their excerpts to that endpoint, and reports nDCG@10 and precision. Grades are cached by query and session in
+`judgments.json`, without excerpt text, so scoring a second ranking reuses them and both are compared against the pooled
+best ordering.
+
 ## Develop
 
 ```bash

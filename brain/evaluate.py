@@ -17,6 +17,7 @@ from typing import Any
 
 from brain.config import load_config
 from brain.corpus import Corpus, CorpusStore, SearchDeadlineExceeded
+from brain.judge import Judge, judged_score
 from brain.learning import Usage
 from brain.provenance import Provenance
 from brain.semantic import Semantic
@@ -214,6 +215,12 @@ def main() -> None:
     parser.add_argument(
         "--usage-dir", type=Path, help="Use usage.sqlite from this directory, such as a copy for trying relabeling"
     )
+    parser.add_argument(
+        "--judge-model",
+        help="Grade results for sampled logged queries with this model at OPENAI_BASE_URL; sends excerpts to it",
+    )
+    parser.add_argument("--judge-queries", type=int, default=150, help="Logged queries to sample for grading")
+    parser.add_argument("--judgments", type=Path, help="Grade cache shared across runs (default: beside usage.sqlite)")
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING, format="%(message)s")
     config = load_config()
@@ -255,6 +262,17 @@ def main() -> None:
             search, [item for item in logged if item["targets"]], args.k, provenance.is_derived, honest_priors
         )
         report["allLogged"] = score(search, logged, args.k, provenance.is_derived, honest_priors)
+        if args.judge_model:
+            judge = Judge(args.judge_model, args.judgments or (args.usage_dir or config.data_dir) / "judgments.json")
+
+            def results(item: dict[str, Any]) -> list[dict[str, Any]]:
+                honest_priors(item)
+                try:
+                    return corpus.search(item["query"], **item["filters"], limit=args.k)
+                except (ValueError, SearchDeadlineExceeded):
+                    return []
+
+            report["judged"] = judged_score(results, logged, judge, args.k, args.judge_queries, args.seed)
         corpus.priors = live_priors
         if args.known_items:
             items = known_items(corpus, provenance, args.known_items, args.seed)
