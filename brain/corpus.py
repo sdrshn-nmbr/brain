@@ -15,6 +15,7 @@ from typing import Any
 import zstandard as zstd
 
 from brain.learning import Usage
+from brain.provenance import Provenance
 from brain.semantic import Semantic
 
 STOPWORDS = {
@@ -59,8 +60,11 @@ Nearest = Callable[[str, int], list[int]]
 Priors = Callable[[], dict[int, float]]
 SQLITE_PROGRESS_STEPS = 1_000
 RRF_K = 60
+SEMANTIC_POOL = 2_000
 SEMANTIC_CANDIDATES = 200
-HITS_PER_SESSION_SCORE = 3
+SEMANTIC_WEIGHT = 0.8
+INJECTED_WEIGHT = 0.3
+HIT_WEIGHTS = (1.0, 0.7, 0.5)
 PRIOR_WEIGHT = 0.01
 ENTRY_COLUMNS = "s.*, s.id AS session_id, e.seq, e.role, e.ts, e.header_line, e.blob_id, b.hash AS blob_hash"
 SEARCH_SQL = f"""
@@ -70,17 +74,18 @@ SEARCH_SQL = f"""
     SELECT {ENTRY_COLUMNS}, m.score
     FROM matched_blobs m
     CROSS JOIN entries AS e INDEXED BY idx_entries_blob
-    JOIN sessions s ON s.id = e.session_id
-    JOIN blobs b ON b.id = m.blob_id
+    CROSS JOIN sessions s ON s.id = e.session_id
+    CROSS JOIN blobs b ON b.id = m.blob_id
     WHERE e.blob_id = m.blob_id
 """
 VECTOR_SQL = f"""
     SELECT {ENTRY_COLUMNS}
     FROM entries AS e INDEXED BY idx_entries_blob
-    JOIN sessions s ON s.id = e.session_id
-    JOIN blobs b ON b.id = e.blob_id
+    CROSS JOIN sessions s ON s.id = e.session_id
+    CROSS JOIN blobs b ON b.id = e.blob_id
     WHERE e.blob_id IN ({{placeholders}})
 """
+SESSIONS_SQL = "SELECT s.*, s.id AS session_id FROM sessions s WHERE s.id IN ({placeholders})"
 
 logger = logging.getLogger("brain.corpus")
 
@@ -138,6 +143,7 @@ class Corpus:
         load_body: BodyLoader | None = None,
         nearest: Nearest | None = None,
         priors: Priors | None = None,
+        provenance: Provenance | None = None,
     ) -> None:
         self.data_dir = data_dir
         self.index_path = data_dir / "index.sqlite"
@@ -145,6 +151,7 @@ class Corpus:
         self._custom_body_loader = load_body
         self.nearest = nearest
         self.priors = priors
+        self.provenance = provenance
         with self._connection(self.index_path) as db:
             columns = {row[1] for row in db.execute("PRAGMA table_info(sessions)")}
         if "repository" not in columns:
@@ -231,21 +238,22 @@ class Corpus:
         semantic = None if exact else self.nearest
         if not terms and semantic is None:
             raise ValueError("query has no searchable terms")
-        filters = ""
-        filter_params: list[Any] = []
+        session_filters = ""
+        session_params: list[Any] = []
         for column, value in (
             ("s.person", person),
             ("s.repository", repository.lower() if repository else None),
             ("s.source", source),
         ):
             if value:
-                filters += f" AND {column} = ?"
-                filter_params.append(value)
+                session_filters += f" AND {column} = ?"
+                session_params.append(value)
         if since:
-            filters += " AND s.started_at >= ?"
-            filter_params.append(since)
+            session_filters += " AND s.started_at >= ?"
+            session_params.append(since)
         if not include_subagents:
-            filters += " AND s.is_subagent = 0"
+            session_filters += " AND s.is_subagent = 0"
+        filters, filter_params = session_filters, list(session_params)
         selected_roles = ["user", "assistant"] if roles is None else roles
         if selected_roles:
             filters += f" AND e.role IN ({','.join('?' for _ in selected_roles)})"
@@ -253,10 +261,14 @@ class Corpus:
         if cancel_event is not None and cancel_event.is_set():
             raise SearchCancelled("Search was cancelled")
         deadline = started + deadline_seconds
+        snapshot = self.provenance.snapshot if self.provenance else None
+        injected = snapshot.injected if snapshot else frozenset()
+        canonical = self.provenance.canonical if self.provenance else (lambda session_id: session_id)
         vector_started = time.perf_counter()
-        nearest = semantic(query, SEMANTIC_CANDIDATES) if semantic else []
+        nearest = [blob_id for blob_id in semantic(query, SEMANTIC_POOL) if blob_id not in injected] if semantic else []
         vector_ms = (time.perf_counter() - vector_started) * 1_000
         sql_started = time.perf_counter()
+        sessions: dict[int, sqlite3.Row] = {}
         try:
             with self._connection(self.index_path) as db:
                 self._install_progress_handler(db, cancel_event, deadline)
@@ -274,6 +286,24 @@ class Corpus:
                         if nearest
                         else []
                     )
+                    in_scope = {row["blob_id"] for row in vector_rows}
+                    semantic_order = [blob_id for blob_id in nearest if blob_id in in_scope][:SEMANTIC_CANDIDATES]
+                    chosen = set(semantic_order)
+                    located: list[tuple[int, sqlite3.Row]] = []
+                    for row in [*keyword_rows, *(row for row in vector_rows if row["blob_id"] in chosen)]:
+                        target = canonical(row["session_id"])
+                        if target is None:
+                            continue
+                        if target == row["session_id"]:
+                            sessions.setdefault(target, row)
+                        located.append((target, row))
+                    borrowed = sorted({target for target, _ in located} - sessions.keys())
+                    if borrowed:
+                        for row in db.execute(
+                            SESSIONS_SQL.format(placeholders=",".join("?" for _ in borrowed)) + session_filters,
+                            [*borrowed, *session_params],
+                        ):
+                            sessions[row["session_id"]] = row
                 finally:
                     db.set_progress_handler(None, 0)
         except sqlite3.OperationalError as error:
@@ -296,19 +326,20 @@ class Corpus:
         blob_scores: dict[int, float] = defaultdict(float)
         keyword_order = sorted({row["blob_id"]: row["score"] for row in keyword_rows}.items(), key=lambda item: item[1])
         for rank, (blob_id, _score) in enumerate(keyword_order):
-            blob_scores[blob_id] += 1 / (RRF_K + rank + 1)
-        for rank, blob_id in enumerate(nearest):
-            blob_scores[blob_id] += 1 / (RRF_K + rank + 1)
-        grouped: dict[int, tuple[sqlite3.Row, dict[int, sqlite3.Row]]] = {}
-        for row in [*keyword_rows, *vector_rows]:
-            grouped.setdefault(row["session_id"], (row, {}))[1].setdefault(row["seq"], row)
+            blob_scores[blob_id] += (INJECTED_WEIGHT if blob_id in injected else 1.0) / (RRF_K + rank + 1)
+        for rank, blob_id in enumerate(semantic_order):
+            blob_scores[blob_id] += SEMANTIC_WEIGHT / (RRF_K + rank + 1)
+        grouped: dict[int, dict[tuple[int, int], sqlite3.Row]] = {}
+        for target, row in located:
+            if target in sessions:
+                grouped.setdefault(target, {}).setdefault((row["session_id"], row["seq"]), row)
         priors = self.priors() if self.priors else {}
         scored = []
-        for session, entries in grouped.values():
+        for target, entries in grouped.items():
             hits = sorted(entries.values(), key=lambda hit: blob_scores[hit["blob_id"]], reverse=True)
-            score = sum(blob_scores[hit["blob_id"]] for hit in hits[:HITS_PER_SESSION_SCORE])
-            score += PRIOR_WEIGHT * priors.get(session["session_id"], 0.0)
-            scored.append((score, session, hits))
+            score = sum(weight * blob_scores[hit["blob_id"]] for weight, hit in zip(HIT_WEIGHTS, hits, strict=False))
+            score += PRIOR_WEIGHT * priors.get(target, 0.0)
+            scored.append((score, sessions[target], hits))
         ordered = sorted(
             scored,
             key=lambda item: (item[0], item[1]["started_at"] or ""),
@@ -337,6 +368,11 @@ class Corpus:
                             "role": hit["role"],
                             "timestamp": hit["ts"],
                             "text": truncate(self._load_body(hit["blob_hash"], objects_db), 4_000),
+                            **(
+                                {"fromSessionId": hit["session_id"]}
+                                if hit["session_id"] != session["session_id"]
+                                else {}
+                            ),
                         }
                         for hit in hits[: bounded(max_hits_per_session, 5, 20)]
                     ],
@@ -354,7 +390,9 @@ class Corpus:
                     "queryTerms": len(terms),
                     "exact": exact,
                     "keywordEntries": len(keyword_rows),
-                    "semanticEntries": len(vector_rows),
+                    "semanticPool": len(nearest),
+                    "semanticEntries": sum(1 for row in vector_rows if row["blob_id"] in chosen),
+                    "creditedToOriginal": sum(1 for target, row in located if target != row["session_id"]),
                     "matchedSessions": len(grouped),
                     "returnedSessions": len(results),
                     "vectorMs": round(vector_ms, 3),
@@ -538,17 +576,21 @@ class CorpusStore:
         ensure_wal(data_dir / "objects.sqlite")
         self.semantic = semantic
         self.usage = usage
+        self.provenance = Provenance(data_dir)
         self._corpus = Corpus(
             data_dir,
             nearest=semantic.nearest if semantic else None,
             priors=usage.priors if usage else None,
+            provenance=self.provenance,
         )
         self._update_lock = threading.Lock()
 
     def read(self) -> Corpus:
         return self._corpus
 
-    def index_vectors(self) -> int:
+    def refresh_indexes(self) -> int:
+        """Classify new user messages, then embed new bodies. Returns the number of vectors added."""
+        self.provenance.refresh(self._corpus.load_bodies)
         return self.semantic.index_missing(self._corpus.load_bodies) if self.semantic else 0
 
     def begin_update(self) -> None:

@@ -749,7 +749,7 @@ def create_app(config: Config | None = None):
     @asynccontextmanager
     async def lifespan(application):
         uploads.start()
-        backfill = asyncio.create_task(asyncio.to_thread(corpus.index_vectors))
+        backfill = asyncio.create_task(asyncio.to_thread(corpus.refresh_indexes))
         try:
             async with sdk_lifespan(application):
                 yield

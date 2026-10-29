@@ -147,12 +147,21 @@ These are options, not required complexity.
 
 Search combines two candidate lists. Full-text search ranks bodies that contain every query term by BM25. A vector index
 ranks user and assistant messages by meaning, so a question can find an answer that uses different words. Reciprocal rank
-fusion merges the lists, and a session scores by its three best messages. Quoted phrases stay keyword-only.
+fusion merges the lists. A session scores by its best message plus smaller shares of its next two, so one strong match
+outranks several weak ones. Quoted phrases stay keyword-only.
 
-The vectors live in `vectors.sqlite` beside the index, through [sqlite-vec](https://github.com/asg017/sqlite-vec). A
-small static embedding model, `minishlab/potion-retrieval-32M` by default, runs on the server CPU, so no text leaves the
-machine. New messages are embedded after each upload. Changing `BRAIN_EMBEDDING_MODEL` rebuilds the vectors on the next
-start; `none` turns semantic search off.
+Agent harnesses store some of their own text under the user role. Search gives injected instructions, such as AGENTS.md
+blocks, skill bodies, and environment context, 30% weight so they can still find a session that loaded a skill without
+crowding out what people wrote. A Codex auto-review session copies the transcript it reviews, including tool output that
+default search skips, so its matches count toward the reviewed session and the copy itself is not returned. App-generated
+suggestion requests are left out. This classification is rebuilt in memory at startup and after each upload.
+
+The vectors live in `vectors.sqlite` beside the index, through [sqlite-vec](https://github.com/asg017/sqlite-vec), and
+searches score a normalized copy held in memory: about 5 ms for 260,000 vectors and 0.5 GB of RAM. Search takes the 2,000
+nearest messages and keeps the 200 best that match the filters, so a repository-scoped search still gets semantic
+results. A small static embedding model, `minishlab/potion-retrieval-32M` by default, runs on the server CPU, so no text
+leaves the machine. New messages are embedded after each upload. Changing `BRAIN_EMBEDDING_MODEL` rebuilds the vectors on
+the next start; `none` turns semantic search off.
 
 A personal Brain also learns from use. It records each search, and a read credits the most recent search within 15
 minutes that returned that session. Sessions that keep proving useful rank higher. A team Brain records neither queries

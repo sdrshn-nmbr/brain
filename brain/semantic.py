@@ -22,8 +22,16 @@ BATCH_SIZE = 512
 BodyLoader = Callable[[list[str]], list[str]]
 
 
+def unit_rows(matrix: np.ndarray) -> np.ndarray:
+    return matrix / (np.linalg.norm(matrix, axis=1, keepdims=True) + 1e-12)
+
+
 class Semantic:
-    """Vector index over unique user and assistant bodies, kept in vectors.sqlite beside the corpus."""
+    """Vector index over unique user and assistant bodies.
+
+    vectors.sqlite beside the corpus stores the embeddings. Searches score a normalized copy held in memory, which is
+    exact and takes a few milliseconds where a sqlite-vec scan took hundreds.
+    """
 
     def __init__(self, data_dir: Path, model_name: str) -> None:
         self.index_path = data_dir / "index.sqlite"
@@ -43,6 +51,7 @@ class Semantic:
                 f"vec0(embedding float[{self.model.dim}] distance_metric=cosine)"
             )
             db.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('model', ?)", (model_name,))
+        self._ids, self._matrix = self._load()
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
@@ -56,17 +65,30 @@ class Semantic:
         finally:
             connection.close()
 
+    def _load(self) -> tuple[np.ndarray, np.ndarray]:
+        started = time.perf_counter()
+        with self._connection() as db:
+            rows = db.execute("SELECT rowid, embedding FROM blob_vectors").fetchall()
+        ids = np.fromiter((row[0] for row in rows), dtype=np.int64, count=len(rows))
+        matrix = np.frombuffer(b"".join(row[1] for row in rows), dtype=np.float32).reshape(len(rows), self.model.dim)
+        logger.info(
+            json.dumps(
+                {"event": "semantic_loaded", "vectors": len(rows), "seconds": round(time.perf_counter() - started, 1)}
+            )
+        )
+        return ids, unit_rows(matrix)
+
     def embed(self, texts: list[str]) -> np.ndarray:
         return np.asarray(self.model.encode([text[:MAX_CHARS] for text in texts]), dtype=np.float32)
 
     def nearest(self, query: str, k: int) -> list[int]:
-        vector = self.embed([query])[0]
-        with self._connection() as db:
-            rows = db.execute(
-                "SELECT rowid FROM blob_vectors WHERE embedding MATCH ? AND k = ? ORDER BY distance",
-                (vector.tobytes(), k),
-            ).fetchall()
-        return [row[0] for row in rows]
+        ids, matrix = self._ids, self._matrix
+        if not len(ids):
+            return []
+        scores = matrix @ unit_rows(self.embed([query]))[0]
+        k = min(k, len(ids))
+        top = np.argpartition(-scores, k - 1)[:k]
+        return ids[top[np.argsort(-scores[top])]].tolist()
 
     def index_missing(self, load_bodies: BodyLoader) -> int:
         """Embed every user/assistant body that has no vector yet. Safe to call after each ingest."""
@@ -80,8 +102,7 @@ class Semantic:
                         WHERE e.role IN ({",".join("?" for _ in EMBEDDED_ROLES)})""",
                     EMBEDDED_ROLES,
                 ).fetchall()
-            with self._connection() as db:
-                present = {row[0] for row in db.execute("SELECT rowid FROM blob_vectors")}
+            present = set(self._ids.tolist())
             missing = [(blob_id, digest) for blob_id, digest in candidates if blob_id not in present]
             for offset in range(0, len(missing), BATCH_SIZE):
                 batch = missing[offset : offset + BATCH_SIZE]
@@ -91,6 +112,8 @@ class Semantic:
                         "INSERT INTO blob_vectors(rowid, embedding) VALUES (?, ?)",
                         ((blob_id, vector.tobytes()) for (blob_id, _), vector in zip(batch, vectors, strict=True)),
                     )
+                self._ids = np.concatenate([self._ids, np.array([blob_id for blob_id, _ in batch], dtype=np.int64)])
+                self._matrix = np.vstack([self._matrix, unit_rows(vectors)])
             logger.info(
                 json.dumps(
                     {

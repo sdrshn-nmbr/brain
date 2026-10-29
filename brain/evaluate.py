@@ -19,7 +19,6 @@ from brain.config import load_config
 from brain.corpus import Corpus, CorpusStore, SearchDeadlineExceeded
 from brain.judge import Judge, judged_score
 from brain.learning import Usage
-from brain.provenance import Provenance
 from brain.semantic import Semantic
 
 logger = logging.getLogger("brain.evaluate")
@@ -43,7 +42,7 @@ def words(text: str) -> list[str]:
     return [word.lower() for word in WORD.findall(text) if word.lower() not in COMMON]
 
 
-def known_items(corpus: Corpus, provenance: Provenance, count: int, seed: int) -> list[dict[str, Any]]:
+def known_items(corpus: Corpus, count: int, seed: int) -> list[dict[str, Any]]:
     """Queries built from sampled sessions, each with the sessions that should be found.
 
     A message query takes three moderately rare words from one message. A topic query takes the session's three most
@@ -51,6 +50,9 @@ def known_items(corpus: Corpus, provenance: Provenance, count: int, seed: int) -
     stay on this machine, so no conversation text goes to a model provider.
     """
     rng = random.Random(seed)
+    provenance = corpus.provenance
+    if provenance is None:
+        raise RuntimeError("Known-item sampling needs the corpus provenance index")
     frequencies: dict[str, int] = {}
     with sqlite3.connect(f"file:{corpus.index_path}?mode=ro", uri=True) as index:
 
@@ -231,7 +233,7 @@ def main() -> None:
     store = CorpusStore(config.data_dir, semantic=semantic, usage=usage)
     try:
         corpus = store.read()
-        provenance = Provenance(config.data_dir)
+        provenance = store.provenance
         provenance.refresh(corpus.load_bodies)
         report: dict[str, Any] = {"model": None if semantic is None else semantic.model_name}
         if args.relabel:
@@ -275,7 +277,7 @@ def main() -> None:
             report["judged"] = judged_score(results, logged, judge, args.k, args.judge_queries, args.seed)
         corpus.priors = live_priors
         if args.known_items:
-            items = known_items(corpus, provenance, args.known_items, args.seed)
+            items = known_items(corpus, args.known_items, args.seed)
             for kind in ("message", "topic"):
                 report[f"known{kind.title()}"] = score(
                     search, [item for item in items if item["kind"] == kind], args.k, provenance.is_derived
