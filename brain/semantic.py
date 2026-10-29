@@ -68,15 +68,19 @@ class Semantic:
     def _load(self) -> tuple[np.ndarray, np.ndarray]:
         started = time.perf_counter()
         with self._connection() as db:
-            rows = db.execute("SELECT rowid, embedding FROM blob_vectors").fetchall()
-        ids = np.fromiter((row[0] for row in rows), dtype=np.int64, count=len(rows))
-        matrix = np.frombuffer(b"".join(row[1] for row in rows), dtype=np.float32).reshape(len(rows), self.model.dim)
+            count = db.execute("SELECT count(*) FROM blob_vectors").fetchone()[0]
+            ids = np.empty(count, dtype=np.int64)
+            matrix = np.empty((count, self.model.dim), dtype=np.float32)
+            for position, (rowid, embedding) in enumerate(db.execute("SELECT rowid, embedding FROM blob_vectors")):
+                ids[position] = rowid
+                matrix[position] = np.frombuffer(embedding, dtype=np.float32)
+        matrix /= np.linalg.norm(matrix, axis=1, keepdims=True) + 1e-12
         logger.info(
             json.dumps(
-                {"event": "semantic_loaded", "vectors": len(rows), "seconds": round(time.perf_counter() - started, 1)}
+                {"event": "semantic_loaded", "vectors": count, "seconds": round(time.perf_counter() - started, 1)}
             )
         )
-        return ids, unit_rows(matrix)
+        return ids, matrix
 
     def embed(self, texts: list[str]) -> np.ndarray:
         return np.asarray(self.model.encode([text[:MAX_CHARS] for text in texts]), dtype=np.float32)
