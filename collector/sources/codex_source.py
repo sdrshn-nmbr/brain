@@ -1023,9 +1023,7 @@ def _parse_full_session(jsonl_path: Path) -> common.FullSession | None:
                 call_names[call_id] = name
             text = payload.get("arguments")
             if text is None:
-                text = json.dumps(
-                    payload.get("input") or payload.get("action") or {}, indent=2, ensure_ascii=False
-                )
+                text = json.dumps(payload.get("input") or payload.get("action") or {}, indent=2, ensure_ascii=False)
             add("tool_call", ts, str(text), tool_name=name, raw=payload)
         elif ptype in ("function_call_output", "custom_tool_call_output", "tool_search_output"):
             call_id = payload.get("call_id")
