@@ -4,12 +4,13 @@ import json
 import math
 import sqlite3
 import threading
-from collections.abc import Callable
+from collections import defaultdict
+from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-FOLLOW_UP_WINDOW = timedelta(minutes=30)
+ATTRIBUTION_WINDOW = timedelta(minutes=15)
 
 
 def utc_now() -> datetime:
@@ -17,7 +18,11 @@ def utc_now() -> datetime:
 
 
 class Usage:
-    """Searches and the sessions read after them. A read of a returned session marks that result useful."""
+    """Searches and the sessions read after them.
+
+    A read credits the most recent search, within fifteen minutes, that returned the session. Crediting every recent
+    search would let one read of a popular session label a whole batch of searches as useful.
+    """
 
     def __init__(self, data_dir: Path) -> None:
         self.db = sqlite3.connect(data_dir / "usage.sqlite", check_same_thread=False)
@@ -50,44 +55,79 @@ class Usage:
             )
             self.db.commit()
 
+    def _credited_search(self, session_id: int, at: datetime) -> int | None:
+        rows = self.db.execute(
+            "SELECT id, session_ids FROM searches WHERE at >= ? AND at <= ? ORDER BY at DESC, id DESC",
+            ((at - ATTRIBUTION_WINDOW).isoformat(), at.isoformat()),
+        ).fetchall()
+        return next((search_id for search_id, returned in rows if session_id in json.loads(returned)), None)
+
     def record_read(self, session_id: int) -> None:
-        since = (utc_now() - FOLLOW_UP_WINDOW).isoformat()
+        now = utc_now()
         with self._lock:
-            searches = self.db.execute("SELECT id, session_ids FROM searches WHERE at >= ?", (since,)).fetchall()
-            hits = [search_id for search_id, returned in searches if session_id in json.loads(returned)]
-            self.db.executemany(
+            search_id = self._credited_search(session_id, now)
+            if search_id is None:
+                return
+            self.db.execute(
                 "INSERT OR IGNORE INTO useful(search_id, session_id, at) VALUES (?, ?, ?)",
-                ((search_id, session_id, utc_now().isoformat()) for search_id in hits),
+                (search_id, session_id, now.isoformat()),
             )
             self.db.commit()
-            if hits:
-                self._priors = None
+            self._priors = None
 
-    def priors(self) -> dict[int, float]:
+    def relabel(self, reads: Iterable[tuple[datetime, int]]) -> dict[str, int]:
+        """Rebuild useful results from logged reads with the current attribution rule."""
         with self._lock:
-            if self._priors is None:
-                rows = self.db.execute("SELECT session_id, count(*) FROM useful GROUP BY session_id").fetchall()
-                self._priors = {session_id: math.log1p(count) for session_id, count in rows}
-            return self._priors
+            previous = self.db.execute("SELECT count(*) FROM useful").fetchone()[0]
+            credited = 0
+            with self.db:
+                self.db.execute("DELETE FROM useful")
+                for at, session_id in reads:
+                    search_id = self._credited_search(session_id, at)
+                    if search_id is not None:
+                        credited += self.db.execute(
+                            "INSERT OR IGNORE INTO useful(search_id, session_id, at) VALUES (?, ?, ?)",
+                            (search_id, session_id, at.isoformat()),
+                        ).rowcount
+            self._priors = None
+            return {"previousUseful": previous, "useful": credited}
 
-    def evaluate(self, search: Callable[[str, dict[str, Any]], list[int]], k: int = 10) -> dict[str, Any]:
-        """Replay searches that led to a read and measure where the useful sessions now rank."""
+    def priors(self, before: str | None = None, excluding: frozenset[int] = frozenset()) -> dict[int, float]:
+        """Log-scaled counts of how often each session proved useful, optionally only from earlier searches."""
+        if before is None and not excluding:
+            with self._lock:
+                if self._priors is None:
+                    rows = self.db.execute("SELECT session_id, count(*) FROM useful GROUP BY session_id").fetchall()
+                    self._priors = {session_id: math.log1p(count) for session_id, count in rows}
+                return self._priors
         with self._lock:
             rows = self.db.execute(
-                """SELECT s.id, s.query, s.filters, group_concat(u.session_id) FROM searches s
-                   JOIN useful u ON u.search_id = s.id GROUP BY s.id"""
+                "SELECT search_id, session_id FROM useful WHERE at < ?", (before or "9999",)
             ).fetchall()
-        recall, reciprocal = [], []
-        for _search_id, query, filters, useful in rows:
-            wanted = {int(value) for value in useful.split(",")}
-            ranked = search(query, json.loads(filters))[:k]
-            recall.append(len(wanted & set(ranked)) / len(wanted))
-            reciprocal.append(next((1 / (rank + 1) for rank, value in enumerate(ranked) if value in wanted), 0.0))
-        return {
-            "queries": len(rows),
-            f"recallAt{k}": round(sum(recall) / len(recall), 4) if recall else None,
-            "mrr": round(sum(reciprocal) / len(reciprocal), 4) if reciprocal else None,
-        }
+        counts: dict[int, int] = defaultdict(int)
+        for search_id, session_id in rows:
+            if search_id not in excluding:
+                counts[session_id] += 1
+        return {session_id: math.log1p(count) for session_id, count in counts.items()}
+
+    def logged_searches(self) -> list[dict[str, Any]]:
+        """Every distinct query and filter combination, with the sessions reads later credited to it."""
+        with self._lock:
+            searches = self.db.execute("SELECT id, at, query, filters FROM searches ORDER BY at").fetchall()
+            useful = self.db.execute("SELECT search_id, session_id FROM useful").fetchall()
+        credited: dict[int, set[int]] = defaultdict(set)
+        for search_id, session_id in useful:
+            credited[search_id].add(session_id)
+        merged: dict[tuple[str, str], dict[str, Any]] = {}
+        for search_id, at, query, filters in searches:
+            options = {key: value for key, value in json.loads(filters).items() if value not in (None, False)}
+            key = (query, json.dumps(options, sort_keys=True))
+            entry = merged.setdefault(
+                key, {"query": query, "filters": options, "at": at, "searchIds": set(), "targets": set()}
+            )
+            entry["searchIds"].add(search_id)
+            entry["targets"] |= credited.get(search_id, set())
+        return list(merged.values())
 
     def close(self) -> None:
         self.db.close()
