@@ -26,6 +26,19 @@ REVIEW = re.compile(r"\s*The following is the Codex agent history")
 REVIEWED = re.compile(r"Reviewed Codex session id: ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})")
 GENERATED = re.compile(r"\s*This is an app-generated request")
 REVIEWED_SESSION_SQL = "SELECT id FROM sessions WHERE uuid = ? AND is_subagent = 0 ORDER BY started_at DESC LIMIT 1"
+SESSIONS_CHUNK = 900
+
+
+def sessions_of(index: sqlite3.Connection, blob_ids: list[int]) -> list[tuple[int, int]]:
+    """(session_id, blob_id) for every user entry that holds one of these messages."""
+    pairs: list[tuple[int, int]] = []
+    for offset in range(0, len(blob_ids), SESSIONS_CHUNK):
+        chunk = blob_ids[offset : offset + SESSIONS_CHUNK]
+        placeholders = ",".join("?" for _ in chunk)
+        pairs += index.execute(
+            f"SELECT session_id, blob_id FROM entries WHERE role = 'user' AND blob_id IN ({placeholders})", chunk
+        ).fetchall()
+    return pairs
 
 
 @dataclass(frozen=True)
@@ -46,7 +59,9 @@ class Provenance:
     def __init__(self, data_dir: Path) -> None:
         self.index_path = data_dir / "index.sqlite"
         self._snapshot = Snapshot()
-        self._review_uuids: dict[int, str] = {}
+        self._injected: set[int] = set()
+        self._review_blobs: dict[int, str] = {}
+        self._generated_blobs: set[int] = set()
         self._last_blob = 0
         self._lock = threading.Lock()
 
@@ -69,7 +84,9 @@ class Provenance:
         return session_id in snapshot.generated or session_id in snapshot.reviews
 
     def refresh(self, load_bodies: BodyLoader) -> dict[str, int]:
-        """Classify user messages added since the last refresh and resolve review copies. Safe after each ingest."""
+        """Classify user messages added since the last refresh, then map every classified message to its current
+        sessions. Re-uploading a session gives it a new ID while its messages keep theirs, so the mapping is rebuilt
+        each time. Safe after each ingest."""
         if not self._lock.acquire(blocking=False):
             return {}
         try:
@@ -80,47 +97,35 @@ class Provenance:
                        WHERE e.role = 'user' AND b.id > ? ORDER BY b.id""",
                     (self._last_blob,),
                 ).fetchall()
-                injected, generated, reviewing = set(self._snapshot.injected), set(self._snapshot.generated), {}
-                review_blobs, generated_blobs = [], []
                 for offset in range(0, len(rows), BATCH_SIZE):
                     batch = rows[offset : offset + BATCH_SIZE]
                     for (blob_id, _digest), body in zip(
                         batch, load_bodies([digest for _, digest in batch]), strict=True
                     ):
                         if INJECTED.match(body, 0, PREFIX_CHARS):
-                            injected.add(blob_id)
+                            self._injected.add(blob_id)
                         elif REVIEW.match(body, 0, PREFIX_CHARS):
-                            injected.add(blob_id)
-                            review_blobs.append(blob_id)
+                            self._injected.add(blob_id)
                             match = REVIEWED.search(body)
-                            if match:
-                                reviewing[blob_id] = match.group(1)
+                            self._review_blobs[blob_id] = match.group(1) if match else ""
                         elif GENERATED.match(body, 0, PREFIX_CHARS):
-                            generated_blobs.append(blob_id)
-                for blob_ids, target in ((review_blobs, None), (generated_blobs, generated)):
-                    for offset in range(0, len(blob_ids), 900):
-                        chunk = blob_ids[offset : offset + 900]
-                        for session_id, blob_id in index.execute(
-                            f"""SELECT session_id, blob_id FROM entries
-                                WHERE role = 'user' AND blob_id IN ({",".join("?" for _ in chunk)})""",
-                            chunk,
-                        ):
-                            if target is None:
-                                uuid = reviewing.get(blob_id)
-                                if uuid or session_id not in self._review_uuids:
-                                    self._review_uuids[session_id] = uuid or ""
-                            else:
-                                target.add(session_id)
+                            self._generated_blobs.add(blob_id)
+                review_uuids: dict[int, str] = {}
+                for session_id, blob_id in sessions_of(index, list(self._review_blobs)):
+                    uuid = self._review_blobs[blob_id]
+                    if uuid or session_id not in review_uuids:
+                        review_uuids[session_id] = uuid
+                generated = {session_id for session_id, _ in sessions_of(index, list(self._generated_blobs))}
                 reviews = {}
-                for session_id, uuid in self._review_uuids.items():
+                for session_id, uuid in review_uuids.items():
                     found = index.execute(REVIEWED_SESSION_SQL, (uuid,)).fetchone() if uuid else None
                     reviews[session_id] = found[0] if found and found[0] != session_id else None
             if rows:
                 self._last_blob = rows[-1][0]
-            self._snapshot = Snapshot(frozenset(injected), frozenset(generated), reviews)
+            self._snapshot = Snapshot(frozenset(self._injected), frozenset(generated), reviews)
             report = {
                 "classified": len(rows),
-                "injected": len(injected),
+                "injected": len(self._injected),
                 "generatedSessions": len(generated),
                 "reviewSessions": len(reviews),
                 "unmatchedReviews": sum(1 for value in reviews.values() if value is None),
