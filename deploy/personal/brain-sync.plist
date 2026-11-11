@@ -8,7 +8,7 @@
   <array>
     <string>/bin/zsh</string>
     <string>-lc</string>
-    <string>exec uvx --refresh-package brain-mcp-server --from git+https://github.com/sdrshn-nmbr/brain brain-sync --endpoint https://brain.your-tailnet.ts.net/mcp --machine mac</string>
+    <string>exec uvx --from git+https://github.com/sdrshn-nmbr/brain brain-sync --endpoint https://brain.your-tailnet.ts.net/mcp --machine mac</string>
   </array>
   <key>StartInterval</key>
   <integer>300</integer>
