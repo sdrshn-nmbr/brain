@@ -43,6 +43,8 @@ Every machine, including the server, uploads its own sessions every five minutes
 uvx --from git+https://github.com/sdrshn-nmbr/brain brain-sync --endpoint https://<host>.<tailnet>.ts.net/mcp --machine <label>
 ```
 
+Do not add `--refresh-package` to these five-minute jobs: uv rebuilds and extracts a fresh environment on every run and never evicts the old ones, which grows `~/.cache/uv/archive-v0` by tens of GB a day. To upgrade a machine, run `uv cache clean brain-mcp-server` once; the next sync fetches the latest `main`.
+
 Run it from a systemd user timer on Linux (`brain-sync.service`, `brain-sync.timer`) or a LaunchAgent on macOS
 (`brain-sync.plist`). Edit the endpoint and label in each, then enable it.
 
