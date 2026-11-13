@@ -1,6 +1,6 @@
 FROM ghcr.io/astral-sh/uv:0.7.19 AS uv
 
-FROM python:3.13-slim-bookworm AS builder
+FROM python:3.15-slim-bookworm AS builder
 COPY --from=uv /uv /usr/local/bin/uv
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 WORKDIR /app
@@ -9,7 +9,7 @@ COPY brain ./brain
 COPY collector ./collector
 RUN uv sync --frozen --no-dev
 
-FROM python:3.13-slim-bookworm
+FROM python:3.15-slim-bookworm
 # Nothing in the image runs Perl, and Debian ships no fix for its open CVEs, so the Essential package is removed.
 RUN dpkg --purge --force-remove-essential perl-base
 ENV BRAIN_DATA_DIR=/data \
