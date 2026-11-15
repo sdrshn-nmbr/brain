@@ -11,6 +11,7 @@ import statistics
 import time
 from collections import Counter, defaultdict
 from collections.abc import Callable
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -54,7 +55,7 @@ def known_items(corpus: Corpus, count: int, seed: int) -> list[dict[str, Any]]:
     if provenance is None:
         raise RuntimeError("Known-item sampling needs the corpus provenance index")
     frequencies: dict[str, int] = {}
-    with sqlite3.connect(f"file:{corpus.index_path}?mode=ro", uri=True) as index:
+    with closing(sqlite3.connect(f"file:{corpus.index_path}?mode=ro", uri=True)) as index:
 
         def frequency(term: str) -> int:
             if term not in frequencies:
@@ -189,8 +190,8 @@ def score(
 def logged_reads(data_dir: Path, index_path: Path) -> list[tuple[datetime, int]]:
     reads: list[tuple[datetime, int]] = []
     with (
-        sqlite3.connect(f"file:{data_dir / 'requests.sqlite'}?mode=ro", uri=True) as requests,
-        sqlite3.connect(f"file:{index_path}?mode=ro", uri=True) as index,
+        closing(sqlite3.connect(f"file:{data_dir / 'requests.sqlite'}?mode=ro", uri=True)) as requests,
+        closing(sqlite3.connect(f"file:{index_path}?mode=ro", uri=True)) as index,
     ):
         for started_at, arguments in requests.execute(READS_SQL):
             values = json.loads(arguments or "{}")
@@ -240,7 +241,7 @@ def main() -> None:
             backup = (
                 args.usage_dir or config.data_dir
             ) / f"usage-before-relabel-{datetime.now(UTC):%Y%m%dT%H%M%SZ}.sqlite"
-            with sqlite3.connect(backup) as copy:
+            with closing(sqlite3.connect(backup)) as copy:
                 usage.db.backup(copy)
             report["relabel"] = {
                 **usage.relabel(logged_reads(config.data_dir, corpus.index_path)),

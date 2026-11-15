@@ -9,7 +9,7 @@ import threading
 import time
 import uuid
 from collections.abc import Mapping
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
@@ -702,11 +702,11 @@ def create_app(config: Config | None = None):
     index_path = config.data_dir / "index.sqlite"
     objects_path = config.data_dir / "objects.sqlite"
     if not index_path.exists():
-        with sqlite3.connect(index_path) as index:
+        with closing(sqlite3.connect(index_path)) as index, index:
             index.row_factory = sqlite3.Row
             init_db(index)
     if not objects_path.exists():
-        with sqlite3.connect(objects_path) as objects:
+        with closing(sqlite3.connect(objects_path)) as objects, objects:
             init_objects_db(objects)
     corpus = CorpusStore(
         config.data_dir,

@@ -8,7 +8,7 @@ import threading
 import time
 from collections import defaultdict
 from collections.abc import Callable
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -101,7 +101,7 @@ class SearchCancelled(RuntimeError):
 def ensure_wal(path: Path) -> None:
     if not path.exists():
         return
-    with sqlite3.connect(path, timeout=30) as connection:
+    with closing(sqlite3.connect(path, timeout=30)) as connection:
         connection.execute("PRAGMA busy_timeout = 30000")
         mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
         if mode.lower() != "wal":

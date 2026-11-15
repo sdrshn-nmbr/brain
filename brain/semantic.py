@@ -6,7 +6,7 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -100,7 +100,7 @@ class Semantic:
             return 0
         try:
             started = time.perf_counter()
-            with sqlite3.connect(f"file:{self.index_path}?mode=ro", uri=True) as index:
+            with closing(sqlite3.connect(f"file:{self.index_path}?mode=ro", uri=True)) as index:
                 candidates = index.execute(
                     f"""SELECT DISTINCT b.id, b.hash FROM entries e JOIN blobs b ON b.id = e.blob_id
                         WHERE e.role IN ({",".join("?" for _ in EMBEDDED_ROLES)})""",

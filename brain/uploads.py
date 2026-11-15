@@ -11,6 +11,7 @@ import threading
 import uuid
 import zipfile
 from collections.abc import Awaitable, Callable
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -527,7 +528,7 @@ def create_archive_ingester(config: Config, corpus: CorpusStore) -> IngestArchiv
                 )
             )
 
-            with sqlite3.connect(config.data_dir / "index.sqlite") as db:
+            with closing(sqlite3.connect(config.data_dir / "index.sqlite")) as db:
                 row = db.execute(
                     """SELECT id, sessions_kept, sessions_skipped FROM imports
                        WHERE archive_sha256 = ? AND person = ?""",

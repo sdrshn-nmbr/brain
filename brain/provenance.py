@@ -7,6 +7,7 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -91,7 +92,7 @@ class Provenance:
             return {}
         try:
             started = time.perf_counter()
-            with sqlite3.connect(f"file:{self.index_path}?mode=ro", uri=True) as index:
+            with closing(sqlite3.connect(f"file:{self.index_path}?mode=ro", uri=True)) as index:
                 rows = index.execute(
                     """SELECT DISTINCT b.id, b.hash FROM entries e JOIN blobs b ON b.id = e.blob_id
                        WHERE e.role = 'user' AND b.id > ? ORDER BY b.id""",
